@@ -1,0 +1,9 @@
+com\example\hyperlocal\auth\AuthServiceTest.class
+com\example\hyperlocal\vendor\LocationAndVendorDiscoveryTest.class
+com\example\hyperlocal\security\SecurityHardeningTest.class
+com\example\hyperlocal\admin\AdminGovernanceTest.class
+com\example\hyperlocal\vendor\VendorFulfillmentTest.class
+com\example\hyperlocal\catalog\CatalogAndInventoryTest.class
+com\example\hyperlocal\order\CartAndCheckoutTest.class
+com\example\hyperlocal\delivery\DeliveryWorkflowTest.class
+com\example\hyperlocal\payment\PaymentAndInventoryDeductionTest.class

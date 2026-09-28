@@ -1,0 +1,9 @@
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\admin\AdminGovernanceTest.java
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\auth\AuthServiceTest.java
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\catalog\CatalogAndInventoryTest.java
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\delivery\DeliveryWorkflowTest.java
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\order\CartAndCheckoutTest.java
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\payment\PaymentAndInventoryDeductionTest.java
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\security\SecurityHardeningTest.java
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\vendor\LocationAndVendorDiscoveryTest.java
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\vendor\VendorFulfillmentTest.java
