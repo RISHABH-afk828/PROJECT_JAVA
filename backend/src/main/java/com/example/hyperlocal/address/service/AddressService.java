@@ -83,7 +83,17 @@ public class AddressService {
     public void deleteAddress(Long id, Long userId) {
         Address address = addressRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new ApiException("ADDRESS_NOT_FOUND", "Address not found or does not belong to you", HttpStatus.NOT_FOUND));
+        boolean wasDefault = Boolean.TRUE.equals(address.getIsDefault());
         addressRepository.delete(address);
+
+        if (wasDefault) {
+            List<Address> remaining = addressRepository.findByUserIdOrderByIsDefaultDescCreatedAtDesc(userId);
+            if (!remaining.isEmpty()) {
+                Address newDefault = remaining.get(0);
+                newDefault.setIsDefault(true);
+                addressRepository.save(newDefault);
+            }
+        }
     }
 
     @Transactional

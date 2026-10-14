@@ -6,7 +6,21 @@ export default function AppNavbar({ selectedLocation, onOpenLocationModal, cartI
   const { user, isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
 
+  const [dropdownOpen, setDropdownOpen] = React.useState(false);
+  const dropdownRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const handleLogout = async () => {
+    setDropdownOpen(false);
     await logout();
     navigate('/login');
   };
@@ -64,13 +78,13 @@ export default function AppNavbar({ selectedLocation, onOpenLocationModal, cartI
 
           {/* User profile / auth */}
           {isAuthenticated ? (
-            <div className="dropdown">
+            <div className="dropdown position-relative" ref={dropdownRef}>
               <button
                 className="btn btn-light border d-flex align-items-center gap-2 rounded-pill px-3 py-1"
                 type="button"
                 id="userMenuButton"
-                data-bs-toggle="dropdown"
-                aria-expanded="false"
+                onClick={() => setDropdownOpen((prev) => !prev)}
+                aria-expanded={dropdownOpen}
               >
                 <div
                   className="rounded-circle bg-dark text-white d-flex align-items-center justify-content-center fw-bold"
@@ -81,7 +95,7 @@ export default function AppNavbar({ selectedLocation, onOpenLocationModal, cartI
                 <span className="d-none d-md-inline small fw-medium text-dark">{user?.name}</span>
                 <i className="bi bi-chevron-down text-muted" style={{ fontSize: '0.7rem' }} />
               </button>
-              <ul className="dropdown-menu dropdown-menu-end shadow-sm border mt-2" aria-labelledby="userMenuButton">
+              <ul className={`dropdown-menu dropdown-menu-end shadow-sm border mt-2 ${dropdownOpen ? 'show' : ''}`} style={{ position: 'absolute', right: 0 }} aria-labelledby="userMenuButton">
                 <li className="px-3 py-2 border-bottom">
                   <div className="small fw-bold text-dark">{user?.name}</div>
                   <div className="text-muted" style={{ fontSize: '0.75rem' }}>{user?.email}</div>
@@ -90,30 +104,30 @@ export default function AppNavbar({ selectedLocation, onOpenLocationModal, cartI
 
                 {user?.role === 'CUSTOMER' && (
                   <>
-                    <li><Link className="dropdown-item py-2" to="/orders"><i className="bi bi-receipt me-2" />My Orders</Link></li>
-                    <li><Link className="dropdown-item py-2" to="/profile"><i className="bi bi-person me-2" />Account Settings</Link></li>
+                    <li><Link className="dropdown-item py-2" to="/orders" onClick={() => setDropdownOpen(false)}><i className="bi bi-receipt me-2" />My Orders</Link></li>
+                    <li><Link className="dropdown-item py-2" to="/profile" onClick={() => setDropdownOpen(false)}><i className="bi bi-person me-2" />Account Settings</Link></li>
                   </>
                 )}
 
                 {user?.role === 'VENDOR' && (
                   <>
-                    <li><Link className="dropdown-item py-2 fw-semibold text-primary" to="/vendor/dashboard"><i className="bi bi-speedometer2 me-2" />Vendor Console</Link></li>
-                    <li><Link className="dropdown-item py-2" to="/vendor/orders"><i className="bi bi-box-seam me-2" />Orders Queue</Link></li>
-                    <li><Link className="dropdown-item py-2" to="/vendor/products"><i className="bi bi-tags me-2" />Products & Catalog</Link></li>
+                    <li><Link className="dropdown-item py-2 fw-semibold text-primary" to="/vendor/dashboard" onClick={() => setDropdownOpen(false)}><i className="bi bi-speedometer2 me-2" />Vendor Console</Link></li>
+                    <li><Link className="dropdown-item py-2" to="/vendor/orders" onClick={() => setDropdownOpen(false)}><i className="bi bi-box-seam me-2" />Orders Queue</Link></li>
+                    <li><Link className="dropdown-item py-2" to="/vendor/products" onClick={() => setDropdownOpen(false)}><i className="bi bi-tags me-2" />Products & Catalog</Link></li>
+                    <li><Link className="dropdown-item py-2" to="/vendor/inventory" onClick={() => setDropdownOpen(false)}><i className="bi bi-boxes me-2" />Inventory</Link></li>
                   </>
                 )}
 
                 {user?.role === 'DELIVERY_PARTNER' && (
                   <>
-                    <li><Link className="dropdown-item py-2 fw-semibold text-primary" to="/delivery/dashboard"><i className="bi bi-bicycle me-2" />Delivery Console</Link></li>
-                    <li><Link className="dropdown-item py-2" to="/delivery/history"><i className="bi bi-clock-history me-2" />Delivery History</Link></li>
+                    <li><Link className="dropdown-item py-2 fw-semibold text-primary" to="/delivery/dashboard" onClick={() => setDropdownOpen(false)}><i className="bi bi-bicycle me-2" />Delivery Console</Link></li>
                   </>
                 )}
 
                 {user?.role === 'ADMIN' && (
                   <>
-                    <li><Link className="dropdown-item py-2 fw-semibold text-danger" to="/admin/dashboard"><i className="bi bi-shield-check me-2" />Admin Console</Link></li>
-                    <li><Link className="dropdown-item py-2" to="/admin/vendors"><i className="bi bi-shop-window me-2" />Vendor Approvals</Link></li>
+                    <li><Link className="dropdown-item py-2 fw-semibold text-danger" to="/admin/dashboard" onClick={() => setDropdownOpen(false)}><i className="bi bi-shield-check me-2" />Admin Console</Link></li>
+                    <li><Link className="dropdown-item py-2" to="/admin/vendors" onClick={() => setDropdownOpen(false)}><i className="bi bi-shop-window me-2" />Vendor Approvals</Link></li>
                   </>
                 )}
 

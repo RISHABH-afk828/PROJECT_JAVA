@@ -24,21 +24,35 @@ import com.example.hyperlocal.user.repository.UserRepository;
 import com.example.hyperlocal.vendor.dto.VendorDto;
 import com.example.hyperlocal.vendor.service.VendorOrderService;
 import com.example.hyperlocal.vendor.service.VendorService;
+import com.example.hyperlocal.payment.service.RazorpaySignatureUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "app.razorpay.key-id=rzp_test_fixture123",
+        "app.razorpay.key-secret=test_fixture_secret_xyz789"
+})
 @ActiveProfiles("h2")
 @Transactional
 public class DeliveryWorkflowTest {
+
+    @Value("${app.razorpay.key-secret}")
+    private String keySecret;
 
     @Autowired
     private DeliveryService deliveryService;
@@ -124,12 +138,20 @@ public class DeliveryWorkflowTest {
         orderReq.setAddressId(address.getId());
         OrderDto order = checkoutService.createOrder(customer.getId(), orderReq);
 
+        MockRestServiceServer mockServer = MockRestServiceServer.createServer(paymentService.getRestTemplate());
+        mockServer.expect(requestTo("https://api.razorpay.com/v1/orders"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"id\":\"order_del_rzp_001\",\"entity\":\"order\",\"amount\":15000,\"status\":\"created\"}", MediaType.APPLICATION_JSON));
+
         PaymentOrderResponse pOrder = paymentService.initiatePayment(customer.getId(), order.getId());
+        mockServer.verify();
+
+        String sig = RazorpaySignatureUtil.calculateSignature(pOrder.getProviderOrderId(), "pay_del_001", keySecret);
         PaymentVerifyRequest verifyReq = new PaymentVerifyRequest();
         verifyReq.setOrderId(order.getId());
         verifyReq.setRazorpayOrderId(pOrder.getProviderOrderId());
         verifyReq.setRazorpayPaymentId("pay_del_001");
-        verifyReq.setRazorpaySignature("mock_valid_signature");
+        verifyReq.setRazorpaySignature(sig);
         paymentService.verifyPayment(customer.getId(), verifyReq);
 
         vendorOrderService.acceptOrder(vendor.getOwnerUserId(), order.getId());

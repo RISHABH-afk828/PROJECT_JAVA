@@ -27,12 +27,18 @@ import java.util.Arrays;
 import java.util.Collections;
 
 import org.springframework.security.config.Customizer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
+import java.util.stream.Collectors;
+import java.util.List;
 
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 public class SecurityConfig {
+
+    @Value("${app.cors.allowed-origins:http://localhost:5173,http://localhost:3000}")
+    private String allowedOrigins;
 
     private final JwtAuthFilter jwtAuthFilter;
     private final RateLimitingFilter rateLimitingFilter;
@@ -80,6 +86,9 @@ public class SecurityConfig {
                         })
                 )
                 .authorizeHttpRequests(auth -> auth
+                        // CORS preflight
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+
                         // Public endpoints
                         .requestMatchers("/api/v1/auth/**").permitAll()
                         .requestMatchers("/api/v1/locations/**").permitAll()
@@ -90,10 +99,11 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/products/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/files/**").permitAll()
                         .requestMatchers("/api/v1/payments/webhook").permitAll()
-                        .requestMatchers("/actuator/**", "/h2-console/**").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/h2-console/**").permitAll()
 
                         // Role-based restrictions
-                        .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/admin/**", "/actuator/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/vendor/**", "/api/v1/vendors/me/**").hasRole("VENDOR")
                         .requestMatchers("/api/v1/delivery/**").hasRole("DELIVERY_PARTNER")
 
@@ -110,11 +120,25 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOriginPatterns(Collections.singletonList("*"));
+        List<String> origins = Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+
+        java.util.Set<String> allOrigins = new java.util.LinkedHashSet<>(origins);
+        for (String o : origins) {
+            if (o.contains("localhost")) {
+                allOrigins.add(o.replace("localhost", "127.0.0.1"));
+            } else if (o.contains("127.0.0.1")) {
+                allOrigins.add(o.replace("127.0.0.1", "localhost"));
+            }
+        }
+        configuration.setAllowedOrigins(new java.util.ArrayList<>(allOrigins));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Request-Id", "Idempotency-Key"));
+        configuration.setAllowedHeaders(Arrays.asList("*"));
         configuration.setExposedHeaders(Arrays.asList("X-Request-Id", "Authorization"));
         configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

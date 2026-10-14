@@ -115,7 +115,7 @@ public class DeliveryService {
             throw new ApiException("DELIVERY_PARTNER_OFFLINE", "You must be online to accept delivery tasks", HttpStatus.BAD_REQUEST);
         }
 
-        Order order = orderRepository.findById(orderId)
+        Order order = orderRepository.findWithLockById(orderId)
                 .orElseThrow(() -> new ApiException("ORDER_NOT_FOUND", "Order not found", HttpStatus.NOT_FOUND));
 
         if (order.getOrderStatus() != OrderStatus.READY) {

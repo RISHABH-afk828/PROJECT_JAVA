@@ -20,12 +20,14 @@ app:
     refresh-token-expiration-ms: 604800000 # 7 days
   upload:
     dir: ${UPLOAD_DIR:uploads}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
   razorpay:
-    key-id: ${RAZORPAY_KEY_ID:rzp_test_placeholder}
-    key-secret: ${RAZORPAY_KEY_SECRET:rzp_secret_placeholder}
-    webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:rzp_webhook_secret_placeholder}
-  google-maps:
-    api-key: ${GOOGLE_MAPS_API_KEY:mock_key}
+    key-id: ${RAZORPAY_KEY_ID:rzp_test_TiMB5R7MBxCQgN}
+    key-secret: ${RAZORPAY_KEY_SECRET:IbMNZIkf6u4HeaQggK5THxPB}
+    webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+  geoapify:
+    api-key: ${GEOAPIFY_API_KEY:12dcba061e6d4a0c9f78494c3ccc46bf}
 
 management:
   endpoints:
@@ -48,7 +50,7 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/hyperlocal_db?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
     username: ${DB_USERNAME:root}
-    password: ${DB_PASSWORD:root}
+    password: ${DB_PASSWORD:161007}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
@@ -58,7 +60,6 @@ spring:
       hibernate:
         format_sql: false
         dialect: org.hibernate.dialect.MySQLDialect
-
 ---
 spring:
   config:
@@ -67,7 +68,7 @@ spring:
   datasource:
     url: jdbc:h2:mem:hyperlocal_db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL
     username: sa
-    password: 
+    password:
     driver-class-name: org.h2.Driver
   h2:
     console:

@@ -10,6 +10,8 @@ export default function VendorProductsPage() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+  const [categoryError, setCategoryError] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -32,31 +34,58 @@ export default function VendorProductsPage() {
     init();
   }, []);
 
+  const fetchCategories = async () => {
+    setLoadingCategories(true);
+    setCategoryError(null);
+    try {
+      const catData = await apiClient.get('/categories');
+      const cats = Array.isArray(catData) ? catData : [];
+      setCategories(cats);
+      return cats;
+    } catch (err) {
+      console.warn('Could not load categories:', err);
+      setCategoryError(err.message || 'Failed to load categories');
+      return [];
+    } finally {
+      setLoadingCategories(false);
+    }
+  };
+
   const init = async () => {
     setLoading(true);
     try {
+      fetchCategories();
+
       const storeData = await apiClient.get('/vendor/store');
       setStore(storeData);
 
-      const [catData, prodData] = await Promise.all([
-        apiClient.get('/categories'),
-        apiClient.get(`/vendors/${storeData.id}/products?availableOnly=false&page=0&size=100`),
-      ]);
-
-      setCategories(catData || []);
-      setProducts(prodData?.content || prodData || []);
-    } catch {
-      //
+      try {
+        const prodData = await apiClient.get(`/vendors/${storeData.id}/products?availableOnly=false&page=0&size=100`);
+        setProducts(prodData?.content || (Array.isArray(prodData) ? prodData : []));
+      } catch (prodErr) {
+        console.warn('Could not load products:', prodErr);
+        setProducts([]);
+      }
+    } catch (err) {
+      if (err.code === 'STORE_NOT_FOUND' || err.status === 404) {
+        setStore(null);
+      } else {
+        console.warn('Could not load vendor store:', err);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleOpenAdd = () => {
+  const handleOpenAdd = async () => {
+    let availableCategories = categories;
+    if (availableCategories.length === 0) {
+      availableCategories = await fetchCategories();
+    }
     setEditingProduct(null);
     setFormData({
       name: '',
-      categoryId: categories[0]?.id || '',
+      categoryId: availableCategories[0]?.id ? String(availableCategories[0].id) : '',
       price: '',
       unit: '',
       description: '',
@@ -70,10 +99,13 @@ export default function VendorProductsPage() {
   };
 
   const handleOpenEdit = (product) => {
+    if (categories.length === 0) {
+      fetchCategories();
+    }
     setEditingProduct(product);
     setFormData({
       name: product.name,
-      categoryId: product.categoryId,
+      categoryId: product.categoryId ? String(product.categoryId) : '',
       price: product.price,
       unit: product.unit,
       description: product.description || '',
@@ -108,39 +140,52 @@ export default function VendorProductsPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!store) return;
+    if (!store) {
+      setErrorMsg('Store profile required. Please set up your storefront first.');
+      return;
+    }
+    const catId = Number(formData.categoryId);
+    if (!formData.categoryId || isNaN(catId) || catId <= 0) {
+      setErrorMsg('Please select a valid product category.');
+      return;
+    }
 
     setSaving(true);
     setErrorMsg(null);
     try {
       if (editingProduct) {
         await apiClient.patch(`/vendors/${store.id}/products/${editingProduct.id}`, {
-          name: formData.name,
-          categoryId: Number(formData.categoryId),
+          name: formData.name.trim(),
+          categoryId: catId,
           price: Number(formData.price),
-          unit: formData.unit,
-          description: formData.description,
-          lowStockThreshold: Number(formData.lowStockThreshold),
-          imageUrl: formData.imageUrl,
+          unit: formData.unit.trim(),
+          description: formData.description?.trim() || undefined,
+          lowStockThreshold: Number(formData.lowStockThreshold) || 5,
+          imageUrl: formData.imageUrl?.trim() || undefined,
           active: formData.active,
         });
       } else {
         await apiClient.post(`/vendors/${store.id}/products`, {
-          name: formData.name,
-          categoryId: Number(formData.categoryId),
+          name: formData.name.trim(),
+          categoryId: catId,
           price: Number(formData.price),
-          unit: formData.unit,
-          description: formData.description,
-          initialStock: Number(formData.initialStock),
-          lowStockThreshold: Number(formData.lowStockThreshold),
-          imageUrl: formData.imageUrl,
+          unit: formData.unit.trim(),
+          description: formData.description?.trim() || undefined,
+          initialStock: Number(formData.initialStock) || 0,
+          lowStockThreshold: Number(formData.lowStockThreshold) || 5,
+          imageUrl: formData.imageUrl?.trim() || undefined,
           active: formData.active,
         });
       }
       setShowModal(false);
       init();
     } catch (err) {
-      setErrorMsg(err.message || 'Could not save product.');
+      if (err.details && typeof err.details === 'object') {
+        const detailsStr = Object.values(err.details).join('. ');
+        setErrorMsg(`${err.message}: ${detailsStr}`);
+      } else {
+        setErrorMsg(err.message || 'Could not save product.');
+      }
     } finally {
       setSaving(false);
     }
@@ -184,6 +229,14 @@ export default function VendorProductsPage() {
 
       {loading ? (
         <Skeleton height="300px" />
+      ) : !store ? (
+        <EmptyState
+          icon="bi-shop"
+          title="Storefront setup required"
+          description="You must configure your storefront profile before managing catalog products."
+          actionLabel="Go to Dashboard Setup"
+          onAction={() => window.location.href = '/vendor/dashboard'}
+        />
       ) : products.length === 0 ? (
         <EmptyState
           icon="bi-box-seam"
@@ -308,16 +361,40 @@ export default function VendorProductsPage() {
 
                     <div className="col-12 col-md-4">
                       <label className="form-label small fw-medium text-dark">Category *</label>
-                      <select
-                        className="form-select"
-                        value={formData.categoryId}
-                        onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                        required
-                      >
-                        {categories.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
+                      {loadingCategories ? (
+                        <div className="d-flex align-items-center gap-2 text-muted small py-2">
+                          <span className="spinner-border spinner-border-sm" role="status" />
+                          <span>Loading categories...</span>
+                        </div>
+                      ) : categories.length === 0 ? (
+                        <div>
+                          <select className="form-select is-invalid" disabled value="">
+                            <option value="">No categories found</option>
+                          </select>
+                          <div className="invalid-feedback d-block small">
+                            {categoryError || 'No active categories found.'}{' '}
+                            <button
+                              type="button"
+                              className="btn btn-link p-0 small text-decoration-none"
+                              onClick={fetchCategories}
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <select
+                          className="form-select"
+                          value={formData.categoryId}
+                          onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+                          required
+                        >
+                          <option value="" disabled>-- Select Category --</option>
+                          {categories.map((c) => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      )}
                     </div>
 
                     <div className="col-6 col-md-4">

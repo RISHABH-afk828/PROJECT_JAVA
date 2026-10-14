@@ -110,37 +110,97 @@ export default function CheckoutPage() {
     }
   };
 
+  const loadRazorpayScript = () => {
+    return new Promise((resolve) => {
+      if (window.Razorpay) {
+        resolve(true);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.async = true;
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
   const handlePlaceOrder = async () => {
     setPlacingOrder(true);
     setErrorMessage(null);
     try {
-      // 1. Create Order
-      const order = await apiClient.post('/checkout/create', { addressId: selectedAddressId });
-      if (setCartCount) setCartCount(0);
-      localStorage.removeItem('cart');
-
       if (paymentMethod === 'RAZORPAY') {
-        try {
-          // 2. Initiate Gateway Order
-          const pOrder = await apiClient.post('/payments/razorpay/create-order', { orderId: order.id });
-
-          // 3. Complete payment verification (simulated gateway signature verification for test environment)
-          await apiClient.post('/payments/razorpay/verify', {
-            orderId: order.id,
-            razorpayOrderId: pOrder.providerOrderId,
-            razorpayPaymentId: `pay_sim_${Date.now()}`,
-            razorpaySignature: 'mock_valid_signature',
-          });
-        } catch (payErr) {
-          console.warn('Payment verification issue:', payErr);
+        const loaded = await loadRazorpayScript();
+        if (!loaded) {
+          throw new Error('Could not load Razorpay payment gateway. Please check your internet connection.');
         }
-      }
 
-      // 4. Navigate to live tracking
-      navigate(`/orders/${order.id}`, { state: { justPlaced: true, orderNumber: order.orderNumber } });
+        // 1. Create Order
+        const order = await apiClient.post('/checkout/create', { addressId: selectedAddressId });
+        if (setCartCount) setCartCount(0);
+        localStorage.removeItem('cart');
+
+        // 2. Initiate Gateway Order
+        const pOrder = await apiClient.post('/payments/razorpay/create-order', { orderId: order.id });
+
+        // 3. Open Real Razorpay Checkout Modal
+        const options = {
+          key: pOrder.keyId,
+          amount: pOrder.amountInPaise,
+          currency: pOrder.currency || 'INR',
+          name: 'Hyperlocal Marketplace',
+          description: `Order #${pOrder.orderNumber || order.orderNumber}`,
+          order_id: pOrder.providerOrderId,
+          prefill: {
+            name: user?.fullName || user?.name || '',
+            email: user?.email || '',
+            contact: user?.phoneNumber || user?.phone || '',
+          },
+          theme: {
+            color: '#198754',
+          },
+          handler: async (response) => {
+            try {
+              setPlacingOrder(true);
+              // Server-side strict HMAC-SHA256 signature verification
+              await apiClient.post('/payments/razorpay/verify', {
+                orderId: order.id,
+                razorpayOrderId: response.razorpay_order_id,
+                razorpayPaymentId: response.razorpay_payment_id,
+                razorpaySignature: response.razorpay_signature,
+              });
+
+              // Navigate to live tracking upon successful verification
+              navigate(`/orders/${order.id}`, { state: { justPlaced: true, orderNumber: order.orderNumber } });
+            } catch (verifyErr) {
+              setErrorMessage(verifyErr.message || 'Payment signature verification failed. Please check order status.');
+              setPlacingOrder(false);
+            }
+          },
+          modal: {
+            ondismiss: () => {
+              setPlacingOrder(false);
+              navigate(`/orders/${order.id}`, { state: { orderNumber: order.orderNumber } });
+            },
+          },
+        };
+
+        const rzp = new window.Razorpay(options);
+        rzp.on('payment.failed', (failResp) => {
+          setPlacingOrder(false);
+          navigate(`/orders/${order.id}`, { state: { orderNumber: order.orderNumber } });
+        });
+        rzp.open();
+      } else {
+        // COD fallback
+        const order = await apiClient.post('/checkout/create', { addressId: selectedAddressId });
+        if (setCartCount) setCartCount(0);
+        localStorage.removeItem('cart');
+        navigate(`/orders/${order.id}`, { state: { justPlaced: true, orderNumber: order.orderNumber } });
+        setPlacingOrder(false);
+      }
     } catch (err) {
       setErrorMessage(err.message || 'Failed to place order. Please try again.');
-    } finally {
       setPlacingOrder(false);
     }
   };

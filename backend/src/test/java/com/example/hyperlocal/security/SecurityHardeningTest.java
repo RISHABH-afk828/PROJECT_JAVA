@@ -68,4 +68,29 @@ public class SecurityHardeningTest {
                 .andExpect(jsonPath("$.error.code").value("RATE_LIMIT_EXCEEDED"))
                 .andExpect(jsonPath("$.error.message", containsString("Too many login attempts")));
     }
+
+    @Test
+    void testFileStoragePathTraversalRejected() throws Exception {
+        mockMvc.perform(get("/api/v1/files/..%2F..%2Fsecret.txt"))
+                .andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void testUnsignedWebhookRejected() throws Exception {
+        mockMvc.perform(post("/api/v1/payments/webhook")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"event\":\"payment.captured\"}"))
+                .andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void testActuatorEndpointsSecured() throws Exception {
+        // Health and info are public
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk());
+
+        // Sensitive actuator management endpoints require authentication/ADMIN
+        mockMvc.perform(get("/actuator/metrics"))
+                .andExpect(status().isUnauthorized());
+    }
 }

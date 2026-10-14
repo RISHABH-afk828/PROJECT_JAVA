@@ -12,6 +12,8 @@ export default function OrderTrackingPage() {
   const [tracking, setTracking] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [retryingPayment, setRetryingPayment] = useState(false);
+  const [retryError, setRetryError] = useState(null);
 
   useEffect(() => {
     fetchTracking();
@@ -27,6 +29,75 @@ export default function OrderTrackingPage() {
       setErrorMsg(err.message || 'Could not load order tracking details.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadRazorpayScript = () => {
+    return new Promise((resolve) => {
+      if (window.Razorpay) {
+        resolve(true);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.async = true;
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
+  const handleRetryPayment = async () => {
+    if (!order) return;
+    setRetryingPayment(true);
+    setRetryError(null);
+    try {
+      const loaded = await loadRazorpayScript();
+      if (!loaded) {
+        throw new Error('Could not load Razorpay payment gateway. Please check internet connection.');
+      }
+
+      const pOrder = await apiClient.post('/payments/razorpay/create-order', { orderId: order.id });
+
+      const options = {
+        key: pOrder.keyId,
+        amount: pOrder.amountInPaise,
+        currency: pOrder.currency || 'INR',
+        name: 'Hyperlocal Marketplace',
+        description: `Order #${pOrder.orderNumber || order.orderNumber}`,
+        order_id: pOrder.providerOrderId,
+        handler: async (response) => {
+          try {
+            await apiClient.post('/payments/razorpay/verify', {
+              orderId: order.id,
+              razorpayOrderId: response.razorpay_order_id,
+              razorpayPaymentId: response.razorpay_payment_id,
+              razorpaySignature: response.razorpay_signature,
+            });
+            fetchTracking();
+          } catch (verifyErr) {
+            setRetryError(verifyErr.message || 'Payment signature verification failed.');
+          } finally {
+            setRetryingPayment(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setRetryingPayment(false);
+          },
+        },
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.on('payment.failed', (failResp) => {
+        setRetryingPayment(false);
+        const reason = failResp.error?.description || 'Payment failed at gateway.';
+        setRetryError(`Payment failed: ${reason}`);
+      });
+      rzp.open();
+    } catch (err) {
+      setRetryError(err.message || 'Failed to initiate payment.');
+      setRetryingPayment(false);
     }
   };
 
@@ -278,6 +349,27 @@ export default function OrderTrackingPage() {
               <span className="text-muted">Payment Status:</span>
               <StatusBadge status={order?.paymentStatus || 'CREATED'} />
             </div>
+
+            {order?.paymentStatus !== 'CAPTURED' && !isCancelled && (
+              <div className="mt-3 pt-3 border-top">
+                {retryError && (
+                  <div className="alert alert-danger py-2 px-3 small mb-2">
+                    {retryError}
+                  </div>
+                )}
+                <button
+                  className="btn btn-success w-100 py-2 fw-semibold rounded-pill d-flex align-items-center justify-content-center gap-2"
+                  disabled={retryingPayment}
+                  onClick={handleRetryPayment}
+                >
+                  <i className="bi bi-credit-card" />
+                  {retryingPayment ? 'Processing...' : 'Complete Payment Now'}
+                </button>
+                <div className="text-muted text-center mt-1" style={{ fontSize: '0.75rem' }}>
+                  Secure payment via Razorpay Test Mode
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

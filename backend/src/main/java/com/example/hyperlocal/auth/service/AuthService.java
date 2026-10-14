@@ -59,6 +59,9 @@ public class AuthService {
         }
 
         Role role = req.getRole() != null ? req.getRole() : Role.CUSTOMER;
+        if (role == Role.ADMIN) {
+            throw new ApiException("INVALID_ROLE", "Registration for ADMIN role is not permitted", HttpStatus.FORBIDDEN);
+        }
 
         User user = new User(
                 req.getName().trim(),
@@ -83,8 +86,11 @@ public class AuthService {
             throw new ApiException("INVALID_CREDENTIALS", "Invalid email/phone or password", HttpStatus.UNAUTHORIZED);
         }
 
-        if (user.getStatus() == UserStatus.SUSPENDED) {
-            throw new ApiException("ACCOUNT_SUSPENDED", "Your account has been suspended. Please contact support.", HttpStatus.FORBIDDEN);
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            if (user.getStatus() == UserStatus.SUSPENDED) {
+                throw new ApiException("ACCOUNT_SUSPENDED", "Your account has been suspended. Please contact support.", HttpStatus.FORBIDDEN);
+            }
+            throw new ApiException("ACCOUNT_INACTIVE", "Your account is not active. Please contact support.", HttpStatus.FORBIDDEN);
         }
 
         return createAuthResponse(user);
@@ -127,9 +133,13 @@ public class AuthService {
     @Transactional
     public String forgotPassword(ForgotPasswordRequest req) {
         String email = req.getEmail().toLowerCase().trim();
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ApiException("USER_NOT_FOUND", "No user found with this email", HttpStatus.NOT_FOUND));
+        java.util.Optional<User> userOpt = userRepository.findByEmail(email);
+        if (userOpt.isEmpty()) {
+            log.info("Password reset requested for non-existent email");
+            return null;
+        }
 
+        User user = userOpt.get();
         String rawToken = UUID.randomUUID().toString();
         String tokenHash = jwtUtils.hashToken(rawToken);
         Instant expiresAt = Instant.now().plusSeconds(900); // 15 minutes
@@ -137,7 +147,7 @@ public class AuthService {
         PasswordResetToken resetToken = new PasswordResetToken(user.getId(), tokenHash, expiresAt);
         passwordResetTokenRepository.save(resetToken);
 
-        log.info("Generated password reset token for user {}: {}", user.getId(), rawToken);
+        log.debug("Generated password reset token for user ID {}", user.getId());
         return rawToken;
     }
 
@@ -159,6 +169,9 @@ public class AuthService {
 
         resetToken.setUsed(true);
         passwordResetTokenRepository.save(resetToken);
+
+        // Invalidate all active refresh sessions for this user on password reset
+        refreshSessionRepository.deleteByUserId(user.getId());
     }
 
     private AuthResponse createAuthResponse(User user) {

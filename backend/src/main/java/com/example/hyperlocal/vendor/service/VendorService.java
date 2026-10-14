@@ -36,15 +36,16 @@ public class VendorService {
     public Page<VendorDto> getNearbyVendors(Double customerLat, Double customerLng, String sort, int page, int size) {
         List<Vendor> activeVendors = vendorRepository.findByStatus(VendorStatus.ACTIVE);
 
+        boolean hasCoords = customerLat != null && customerLng != null;
         List<VendorDto> serviceable = activeVendors.stream()
                 .map(v -> {
-                    double dist = customerLat != null && customerLng != null
+                    double dist = hasCoords
                             ? HaversineUtil.distance(customerLat, customerLng, v.getLatitude(), v.getLongitude())
                             : 0.0;
                     boolean isOpen = calculateIsOpen(v);
                     return VendorDto.fromEntity(v, dist, isOpen);
                 })
-                .filter(dto -> customerLat == null || customerLng == null || dto.getDistanceKm() <= dto.getDeliveryRadiusKm())
+                .filter(dto -> !hasCoords || dto.getDistanceKm() <= dto.getDeliveryRadiusKm())
                 .collect(Collectors.toList());
 
         // Sorting
@@ -82,17 +83,19 @@ public class VendorService {
             return Collections.emptyList();
         }
         String q = query.trim().toLowerCase();
+        boolean hasCoords = customerLat != null && customerLng != null;
 
         return vendorRepository.findByStatus(VendorStatus.ACTIVE).stream()
                 .filter(v -> v.getStoreName().toLowerCase().contains(q) ||
                              (v.getDescription() != null && v.getDescription().toLowerCase().contains(q)) ||
                              v.getAddress().toLowerCase().contains(q))
                 .map(v -> {
-                    double dist = customerLat != null && customerLng != null
+                    double dist = hasCoords
                             ? HaversineUtil.distance(customerLat, customerLng, v.getLatitude(), v.getLongitude())
                             : 0.0;
                     return VendorDto.fromEntity(v, dist, calculateIsOpen(v));
                 })
+                .filter(dto -> !hasCoords || dto.getDistanceKm() <= dto.getDeliveryRadiusKm())
                 .sorted(Comparator.comparing(VendorDto::getDistanceKm))
                 .collect(Collectors.toList());
     }
@@ -102,6 +105,16 @@ public class VendorService {
         vendorRepository.findByOwnerUserId(ownerUserId).ifPresent(v -> {
             throw new ApiException("VENDOR_ALREADY_EXISTS", "A store is already registered for this account", HttpStatus.CONFLICT);
         });
+
+        if (req.getLatitude() == null || req.getLongitude() == null) {
+            throw new ApiException("INVALID_COORDINATES", "Latitude and longitude are required", HttpStatus.BAD_REQUEST);
+        }
+        if (req.getLatitude() < -90.0 || req.getLatitude() > 90.0 || req.getLongitude() < -180.0 || req.getLongitude() > 180.0) {
+            throw new ApiException("INVALID_COORDINATES", "Latitude must be between -90 and 90 and longitude between -180 and 180", HttpStatus.BAD_REQUEST);
+        }
+        if (req.getDeliveryRadiusKm() == null || req.getDeliveryRadiusKm() <= 0.0) {
+            throw new ApiException("INVALID_DELIVERY_RADIUS", "Delivery radius must be greater than zero", HttpStatus.BAD_REQUEST);
+        }
 
         Vendor vendor = new Vendor(
                 ownerUserId,
@@ -113,7 +126,7 @@ public class VendorService {
                 req.getLongitude(),
                 req.getDeliveryRadiusKm()
         );
-        if (req.getImageUrl() != null) {
+        if (req.getImageUrl() != null && !req.getImageUrl().trim().isEmpty()) {
             vendor.setImageUrl(req.getImageUrl().trim());
         }
 

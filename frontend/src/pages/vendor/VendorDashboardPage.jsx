@@ -11,22 +11,119 @@ export default function VendorDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [togglingStatus, setTogglingStatus] = useState(false);
 
+  const [setupForm, setSetupForm] = useState({
+    storeName: '',
+    description: '',
+    phone: '',
+    address: '',
+    latitude: '',
+    longitude: '',
+    deliveryRadiusKm: 5.0,
+    imageUrl: '',
+  });
+  const [setupError, setSetupError] = useState(null);
+  const [submittingSetup, setSubmittingSetup] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+
   useEffect(() => {
     fetchDashboardData();
   }, []);
 
   const fetchDashboardData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const storeData = await apiClient.get('/vendor/store');
       setStore(storeData);
 
-      const stockData = await apiClient.get('/vendors/me/inventory/low-stock');
-      setLowStock(stockData || []);
-    } catch {
-      // Fallback
+      try {
+        const stockData = await apiClient.get('/vendors/me/inventory/low-stock');
+        setLowStock(stockData || []);
+      } catch (stockErr) {
+        console.warn('Could not load low-stock items:', stockErr);
+        setLowStock([]);
+      }
+    } catch (err) {
+      if (err.code === 'STORE_NOT_FOUND' || err.status === 404) {
+        // Store does not exist yet for this account
+        setStore(null);
+      } else {
+        // Genuine network error, 401/403, or 500 error
+        setLoadError(err.message || 'Unable to load store information.');
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSetupChange = (e) => {
+    const { name, value } = e.target;
+    setSetupForm((prev) => ({ ...prev, [name]: value }));
+    if (setupError) setSetupError(null);
+  };
+
+  const handleUseCurrentLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setSetupForm((prev) => ({
+            ...prev,
+            latitude: Number(pos.coords.latitude.toFixed(6)),
+            longitude: Number(pos.coords.longitude.toFixed(6)),
+          }));
+        },
+        (err) => {
+          setSetupError('Could not get current location: ' + err.message);
+        }
+      );
+    } else {
+      setSetupError('Geolocation is not supported by your browser');
+    }
+  };
+
+  const handleRegisterStore = async (e) => {
+    e.preventDefault();
+    const lat = parseFloat(setupForm.latitude);
+    const lng = parseFloat(setupForm.longitude);
+    const radius = parseFloat(setupForm.deliveryRadiusKm);
+
+    if (isNaN(lat) || lat < -90 || lat > 90) {
+      setSetupError('Latitude must be a valid number between -90 and 90');
+      return;
+    }
+    if (isNaN(lng) || lng < -180 || lng > 180) {
+      setSetupError('Longitude must be a valid number between -180 and 180');
+      return;
+    }
+    if (isNaN(radius) || radius <= 0) {
+      setSetupError('Delivery radius must be greater than 0 km');
+      return;
+    }
+
+    setSubmittingSetup(true);
+    setSetupError(null);
+    try {
+      const createdStore = await apiClient.post('/vendor/register', {
+        storeName: setupForm.storeName.trim(),
+        description: setupForm.description.trim() || undefined,
+        phone: setupForm.phone.trim(),
+        address: setupForm.address.trim(),
+        latitude: lat,
+        longitude: lng,
+        deliveryRadiusKm: radius,
+        imageUrl: setupForm.imageUrl.trim() || undefined,
+      });
+      setStore(createdStore);
+      fetchDashboardData();
+    } catch (err) {
+      if (err.details && typeof err.details === 'object') {
+        const detailsStr = Object.values(err.details).join('. ');
+        setSetupError(`${err.message}: ${detailsStr}`);
+      } else {
+        setSetupError(err.message || 'Failed to register store. Please try again.');
+      }
+    } finally {
+      setSubmittingSetup(false);
     }
   };
 
@@ -56,6 +153,188 @@ export default function VendorDashboardPage() {
               <Skeleton height="100px" />
             </div>
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="container-xl py-5">
+        <div className="row justify-content-center">
+          <div className="col-12 col-md-8 col-lg-6">
+            <div className="card border shadow-sm p-4 text-center" style={{ borderRadius: 'var(--radius-md)' }}>
+              <div className="text-danger mb-3">
+                <i className="bi bi-exclamation-triangle-fill fs-1" />
+              </div>
+              <h4 className="fw-bold text-dark mb-2">Unable to Load Dashboard</h4>
+              <p className="text-muted small mb-4">{loadError}</p>
+              <div>
+                <button className="btn btn-primary px-4 rounded-pill" onClick={fetchDashboardData}>
+                  <i className="bi bi-arrow-clockwise me-2" /> Retry
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!store) {
+    return (
+      <div className="container-xl py-5">
+        <div className="row justify-content-center">
+          <div className="col-12 col-md-8 col-lg-6">
+            <div className="card border shadow-sm p-4 p-md-5" style={{ borderRadius: 'var(--radius-md)' }}>
+              <div className="text-center mb-4">
+                <span
+                  className="d-inline-flex align-items-center justify-content-center text-white rounded mb-2"
+                  style={{ width: '48px', height: '48px', backgroundColor: 'var(--color-primary)' }}
+                >
+                  <i className="bi bi-shop fs-3" />
+                </span>
+                <h3 className="fw-bold text-dark mt-2 mb-1">Set Up Your Storefront</h3>
+                <p className="text-muted small">
+                  Complete your store profile to start listing products and fulfilling local customer orders.
+                </p>
+              </div>
+
+              {setupError && (
+                <div className="alert alert-danger py-2 px-3 small d-flex align-items-center gap-2 mb-3" role="alert">
+                  <i className="bi bi-exclamation-circle-fill text-danger flex-shrink-0" />
+                  <div>{setupError}</div>
+                </div>
+              )}
+
+              <form onSubmit={handleRegisterStore}>
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold text-dark">Store Name *</label>
+                  <input
+                    type="text"
+                    name="storeName"
+                    className="form-control"
+                    placeholder="e.g. Green Valley Fresh Market"
+                    value={setupForm.storeName}
+                    onChange={handleSetupChange}
+                    required
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold text-dark">Store Description</label>
+                  <textarea
+                    name="description"
+                    className="form-control"
+                    rows={2}
+                    placeholder="Brief description of your products and neighborhood store"
+                    value={setupForm.description}
+                    onChange={handleSetupChange}
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold text-dark">Contact Phone *</label>
+                  <input
+                    type="tel"
+                    name="phone"
+                    className="form-control"
+                    placeholder="+919876543210"
+                    value={setupForm.phone}
+                    onChange={handleSetupChange}
+                    required
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold text-dark">Store Address *</label>
+                  <input
+                    type="text"
+                    name="address"
+                    className="form-control"
+                    placeholder="123 Market Road, Koramangala, Bengaluru"
+                    value={setupForm.address}
+                    onChange={handleSetupChange}
+                    required
+                  />
+                </div>
+
+                <div className="row g-2 mb-3">
+                  <div className="col-6">
+                    <label className="form-label small fw-semibold text-dark">Latitude * (-90 to 90)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      name="latitude"
+                      className="form-control"
+                      placeholder="12.9352"
+                      value={setupForm.latitude}
+                      onChange={handleSetupChange}
+                      required
+                    />
+                  </div>
+                  <div className="col-6">
+                    <label className="form-label small fw-semibold text-dark">Longitude * (-180 to 180)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      name="longitude"
+                      className="form-control"
+                      placeholder="77.6245"
+                      value={setupForm.longitude}
+                      onChange={handleSetupChange}
+                      required
+                    />
+                  </div>
+                  <div className="col-12 mt-1">
+                    <button
+                      type="button"
+                      className="btn btn-outline-secondary btn-sm rounded-pill w-100"
+                      onClick={handleUseCurrentLocation}
+                    >
+                      <i className="bi bi-geo-alt me-1" /> Use My Current GPS Location
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <label className="form-label small fw-semibold text-dark">Delivery Radius (km) *</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.5"
+                    max="50"
+                    name="deliveryRadiusKm"
+                    className="form-control"
+                    value={setupForm.deliveryRadiusKm}
+                    onChange={handleSetupChange}
+                    required
+                  />
+                  <div className="form-text small">Maximum distance you can fulfill deliveries.</div>
+                </div>
+
+                <div className="mb-4">
+                  <label className="form-label small fw-semibold text-dark">Store Banner / Image URL</label>
+                  <input
+                    type="url"
+                    name="imageUrl"
+                    className="form-control"
+                    placeholder="https://example.com/store-image.jpg"
+                    value={setupForm.imageUrl}
+                    onChange={handleSetupChange}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary w-100 py-2 fw-semibold rounded-pill"
+                  disabled={submittingSetup}
+                >
+                  {submittingSetup ? 'Creating Store...' : 'Launch Storefront'}
+                </button>
+              </form>
+            </div>
+          </div>
         </div>
       </div>
     );

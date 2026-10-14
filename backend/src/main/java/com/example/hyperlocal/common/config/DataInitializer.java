@@ -65,8 +65,10 @@ public class DataInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        seedCategoriesIfMissing();
+
         if (userRepository.count() > 0) {
-            log.info("Database already seeded. Skipping initial data seed.");
+            log.info("Database already seeded with users. Skipping initial demo seed.");
             return;
         }
 
@@ -155,12 +157,12 @@ public class DataInitializer implements CommandLineRunner {
         Vendor savedV3 = vendorRepository.save(v3);
         seedStoreHours(savedV3.getId());
 
-        // 5. Seed Categories
-        Category catDairy = categoryRepository.save(new Category("Dairy & Eggs", "dairy", null));
-        Category catGroceries = categoryRepository.save(new Category("Groceries & Staples", "groceries", null));
-        Category catProduce = categoryRepository.save(new Category("Fruits & Veggies", "produce", null));
-        Category catSnacks = categoryRepository.save(new Category("Bakery & Snacks", "snacks", null));
-        Category catBeverages = categoryRepository.save(new Category("Beverages", "beverages", null));
+        // 5. Retrieve Categories
+        Category catDairy = categoryRepository.findBySlug("dairy").orElseThrow();
+        Category catGroceries = categoryRepository.findBySlug("groceries").orElseThrow();
+        Category catProduce = categoryRepository.findBySlug("produce").orElseThrow();
+        Category catSnacks = categoryRepository.findBySlug("snacks").orElseThrow();
+        Category catBeverages = categoryRepository.findBySlug("beverages").orElseThrow();
 
         // 6. Seed Products & Inventory for Fresh Mart (Vendor 1)
         seedProduct(savedV1.getId(), catDairy.getId(), "Farm Fresh Whole Milk 500ml", new BigDecimal("32.00"), "500 ml",
@@ -191,6 +193,24 @@ public class DataInitializer implements CommandLineRunner {
                 "Sweet and juicy Shimla red apples.", 20, 5);
 
         log.info("Initial data seeding completed successfully with categories, products, inventory, 3 vendors, 1 customer, 1 delivery partner, 1 admin!");
+    }
+
+    private void seedCategoriesIfMissing() {
+        createCategoryIfAbsent("Dairy & Eggs", "dairy", null);
+        createCategoryIfAbsent("Groceries & Staples", "groceries", null);
+        createCategoryIfAbsent("Fruits & Veggies", "produce", null);
+        createCategoryIfAbsent("Bakery & Snacks", "snacks", null);
+        createCategoryIfAbsent("Beverages", "beverages", null);
+        createCategoryIfAbsent("Personal Care", "personal-care", null);
+        createCategoryIfAbsent("Household Essentials", "household", null);
+    }
+
+    private Category createCategoryIfAbsent(String name, String slug, String imageUrl) {
+        return categoryRepository.findBySlug(slug)
+                .orElseGet(() -> {
+                    log.info("Seeding default category: {} ({})", name, slug);
+                    return categoryRepository.save(new Category(name, slug, imageUrl));
+                });
     }
 
     private void seedProduct(Long vendorId, Long categoryId, String name, BigDecimal price, String unit, String desc, int stock, int threshold) {

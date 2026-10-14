@@ -37,9 +37,19 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
 import static org.junit.jupiter.api.Assertions.*;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "app.razorpay.key-id=rzp_test_fixture123",
+        "app.razorpay.key-secret=test_fixture_secret_xyz789"
+})
 @ActiveProfiles("h2")
 @Transactional
 public class PaymentAndInventoryDeductionTest {
@@ -74,7 +84,7 @@ public class PaymentAndInventoryDeductionTest {
     @Autowired
     private OrderService orderService;
 
-    @Value("${app.razorpay.key-secret:rzp_secret_placeholder}")
+    @Value("${app.razorpay.key-secret}")
     private String keySecret;
 
     @Test
@@ -119,28 +129,41 @@ public class PaymentAndInventoryDeductionTest {
         assertEquals(OrderStatus.PAYMENT_PENDING, order.getOrderStatus());
         assertEquals(PaymentStatus.CREATED, order.getPaymentStatus());
 
-        // 2. Initiate Payment Session
+        // 2. Initiate Payment Session (mock outbound Razorpay order creation)
+        MockRestServiceServer mockServer = MockRestServiceServer.createServer(paymentService.getRestTemplate());
+        mockServer.expect(requestTo("https://api.razorpay.com/v1/orders"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"id\":\"order_test_rzp_999\",\"entity\":\"order\",\"amount\":20000,\"status\":\"created\"}", MediaType.APPLICATION_JSON));
+
         PaymentOrderResponse initResponse = paymentService.initiatePayment(customerId, order.getId());
-        assertNotNull(initResponse.getProviderOrderId());
+        mockServer.verify();
+
+        assertEquals("order_test_rzp_999", initResponse.getProviderOrderId());
         assertEquals("RAZORPAY", initResponse.getProvider());
         assertTrue(initResponse.getAmountInPaise() > 0);
 
-        // 3. Verify with Invalid Signature -> fails
+        // 3. Verify with Invalid Signature -> fails with INVALID_PAYMENT_SIGNATURE
         PaymentVerifyRequest badReq = new PaymentVerifyRequest();
         badReq.setOrderId(order.getId());
         badReq.setRazorpayOrderId(initResponse.getProviderOrderId());
-        badReq.setRazorpayPaymentId("pay_fake_123");
-        // Using an intentionally malformed signature when keySecret is not placeholder
-        // If placeholder, we test with valid HMAC calculation
-        String fakeSecret = "secret_for_test";
-        String validSig = RazorpaySignatureUtil.calculateSignature(initResponse.getProviderOrderId(), "pay_live_999", fakeSecret);
+        badReq.setRazorpayPaymentId("pay_live_999");
+        badReq.setRazorpaySignature("invalid_signature_hash");
 
-        // 4. Verify with Valid Signature
+        ApiException ex = assertThrows(ApiException.class, () -> paymentService.verifyPayment(customerId, badReq));
+        assertEquals("INVALID_PAYMENT_SIGNATURE", ex.getCode());
+
+        // 4. Verify with Valid HMAC-SHA256 Signature
+        String validSig = RazorpaySignatureUtil.calculateSignature(
+                initResponse.getProviderOrderId(),
+                "pay_live_999",
+                keySecret
+        );
+
         PaymentVerifyRequest goodReq = new PaymentVerifyRequest();
         goodReq.setOrderId(order.getId());
         goodReq.setRazorpayOrderId(initResponse.getProviderOrderId());
         goodReq.setRazorpayPaymentId("pay_live_999");
-        goodReq.setRazorpaySignature("mock_valid_signature");
+        goodReq.setRazorpaySignature(validSig);
 
         PaymentDto capturedPayment = paymentService.verifyPayment(customerId, goodReq);
         assertNotNull(capturedPayment);

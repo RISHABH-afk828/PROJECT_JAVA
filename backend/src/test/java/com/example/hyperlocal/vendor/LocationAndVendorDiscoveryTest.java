@@ -126,5 +126,47 @@ public class LocationAndVendorDiscoveryTest {
         Long otherUserId = 8888L;
         assertThrows(ApiException.class, () -> addressService.getAddressById(saved1.getId(), otherUserId));
         assertThrows(ApiException.class, () -> addressService.deleteAddress(saved1.getId(), otherUserId));
+
+        // Test deleting the current default address promotes the remaining address to default
+        addressService.deleteAddress(saved2.getId(), testUserId);
+        AddressDto remaining = addressService.getAddressById(saved1.getId(), testUserId);
+        assertTrue(remaining.getIsDefault(), "Remaining address should be promoted to default when previous default was deleted");
+    }
+
+    @Test
+    void testVendorRegistrationCoordinateValidation() {
+        Long testOwnerId = 7777L;
+        VendorRegistrationRequest badLat = new VendorRegistrationRequest();
+        badLat.setStoreName("Bad Coordinates Store");
+        badLat.setPhone("+919111111111");
+        badLat.setAddress("Some Road");
+        badLat.setLatitude(95.0); // Invalid latitude > 90
+        badLat.setLongitude(77.0);
+        badLat.setDeliveryRadiusKm(5.0);
+
+        ApiException ex = assertThrows(ApiException.class, () -> vendorService.registerStore(testOwnerId, badLat));
+        assertEquals("INVALID_COORDINATES", ex.getCode());
+
+        VendorRegistrationRequest badLng = new VendorRegistrationRequest();
+        badLng.setStoreName("Bad Coordinates Store 2");
+        badLng.setPhone("+919111111112");
+        badLng.setAddress("Some Road");
+        badLng.setLatitude(12.0);
+        badLng.setLongitude(-195.0); // Invalid longitude < -180
+        badLng.setDeliveryRadiusKm(5.0);
+
+        ApiException ex2 = assertThrows(ApiException.class, () -> vendorService.registerStore(testOwnerId, badLng));
+        assertEquals("INVALID_COORDINATES", ex2.getCode());
+    }
+
+    @Test
+    void testSearchVendorsRadiusFiltering() {
+        // Search for "Fresh" with nearby coordinates
+        List<VendorDto> nearResults = vendorService.searchVendors("Fresh", 12.9352, 77.6245);
+        assertFalse(nearResults.isEmpty());
+
+        // Search for "Fresh" with far away coordinates (e.g. Mumbai/Delhi)
+        List<VendorDto> farResults = vendorService.searchVendors("Fresh", 28.6139, 77.2090);
+        assertTrue(farResults.isEmpty(), "Out of radius search should filter out non-serviceable vendors");
     }
 }

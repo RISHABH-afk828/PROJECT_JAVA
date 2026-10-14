@@ -24,21 +24,35 @@ import com.example.hyperlocal.user.repository.UserRepository;
 import com.example.hyperlocal.vendor.dto.VendorDto;
 import com.example.hyperlocal.vendor.service.VendorOrderService;
 import com.example.hyperlocal.vendor.service.VendorService;
+import com.example.hyperlocal.payment.service.RazorpaySignatureUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "app.razorpay.key-id=rzp_test_fixture123",
+        "app.razorpay.key-secret=test_fixture_secret_xyz789"
+})
 @ActiveProfiles("h2")
 @Transactional
 public class VendorFulfillmentTest {
+
+    @Value("${app.razorpay.key-secret}")
+    private String keySecret;
 
     @Autowired
     private VendorOrderService vendorOrderService;
@@ -110,12 +124,20 @@ public class VendorFulfillmentTest {
         orderReq.setAddressId(address.getId());
         OrderDto order1 = checkoutService.createOrder(customer.getId(), orderReq);
 
+        MockRestServiceServer mockServer = MockRestServiceServer.createServer(paymentService.getRestTemplate());
+        mockServer.expect(requestTo("https://api.razorpay.com/v1/orders"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"id\":\"order_vf_rzp_001\",\"entity\":\"order\",\"amount\":10000,\"status\":\"created\"}", MediaType.APPLICATION_JSON));
+
         PaymentOrderResponse pOrder = paymentService.initiatePayment(customer.getId(), order1.getId());
+        mockServer.verify();
+
+        String sig1 = RazorpaySignatureUtil.calculateSignature(pOrder.getProviderOrderId(), "pay_test_001", keySecret);
         PaymentVerifyRequest verifyReq = new PaymentVerifyRequest();
         verifyReq.setOrderId(order1.getId());
         verifyReq.setRazorpayOrderId(pOrder.getProviderOrderId());
         verifyReq.setRazorpayPaymentId("pay_test_001");
-        verifyReq.setRazorpaySignature("mock_valid_signature");
+        verifyReq.setRazorpaySignature(sig1);
         paymentService.verifyPayment(customer.getId(), verifyReq);
 
         // 2. Vendor fetches orders queue
@@ -154,12 +176,21 @@ public class VendorFulfillmentTest {
         cartService.addItem(customer.getId(), addReq2);
 
         OrderDto order2 = checkoutService.createOrder(customer.getId(), orderReq);
+
+        MockRestServiceServer mockServer2 = MockRestServiceServer.createServer(paymentService.getRestTemplate());
+        mockServer2.expect(requestTo("https://api.razorpay.com/v1/orders"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"id\":\"order_vf_rzp_002\",\"entity\":\"order\",\"amount\":20000,\"status\":\"created\"}", MediaType.APPLICATION_JSON));
+
         PaymentOrderResponse pOrder2 = paymentService.initiatePayment(customer.getId(), order2.getId());
+        mockServer2.verify();
+
+        String sig2 = RazorpaySignatureUtil.calculateSignature(pOrder2.getProviderOrderId(), "pay_test_002", keySecret);
         PaymentVerifyRequest verifyReq2 = new PaymentVerifyRequest();
         verifyReq2.setOrderId(order2.getId());
         verifyReq2.setRazorpayOrderId(pOrder2.getProviderOrderId());
         verifyReq2.setRazorpayPaymentId("pay_test_002");
-        verifyReq2.setRazorpaySignature("mock_valid_signature");
+        verifyReq2.setRazorpaySignature(sig2);
         paymentService.verifyPayment(customer.getId(), verifyReq2);
 
         int stockAfterOrder2 = inventoryRepository.findByProductId(product.getId())

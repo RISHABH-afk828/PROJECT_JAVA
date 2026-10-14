@@ -12,4 +12,5 @@ import java.util.List;
 public interface InventoryMovementRepository extends JpaRepository<InventoryMovement, Long> {
     Page<InventoryMovement> findByProductIdOrderByCreatedAtDesc(Long productId, Pageable pageable);
     List<InventoryMovement> findTop20ByProductIdOrderByCreatedAtDesc(Long productId);
+    boolean existsByReferenceIdAndReason(String referenceId, String reason);
 }

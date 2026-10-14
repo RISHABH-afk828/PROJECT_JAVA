@@ -48,6 +48,13 @@ public class ProductService {
 
     @Transactional(readOnly = true)
     public Page<ProductDto> getVendorProducts(Long vendorId, Long categoryId, boolean activeOnly, String query, int page, int size) {
+        Vendor vendor = vendorRepository.findById(vendorId)
+                .orElseThrow(() -> new ApiException("VENDOR_NOT_FOUND", "Store not found", HttpStatus.NOT_FOUND));
+
+        if (activeOnly && vendor.getStatus() != com.example.hyperlocal.vendor.entity.VendorStatus.ACTIVE) {
+            return new PageImpl<>(Collections.emptyList(), PageRequest.of(page, size), 0);
+        }
+
         Page<Product> productPage = productRepository.findVendorProducts(
                 vendorId, categoryId, activeOnly, query, PageRequest.of(page, size));
 
@@ -102,6 +109,9 @@ public class ProductService {
 
         Category category = categoryRepository.findById(req.getCategoryId())
                 .orElseThrow(() -> new ApiException("CATEGORY_NOT_FOUND", "Category not found", HttpStatus.BAD_REQUEST));
+        if (!Boolean.TRUE.equals(category.getActive())) {
+            throw new ApiException("CATEGORY_INACTIVE", "Category is inactive", HttpStatus.BAD_REQUEST);
+        }
 
         Product product = new Product(vendorId, category.getId(), req.getName().trim(), req.getPrice(), req.getUnit().trim());
         product.setDescription(req.getDescription());
@@ -145,6 +155,9 @@ public class ProductService {
 
         Category category = categoryRepository.findById(req.getCategoryId())
                 .orElseThrow(() -> new ApiException("CATEGORY_NOT_FOUND", "Category not found", HttpStatus.BAD_REQUEST));
+        if (!Boolean.TRUE.equals(category.getActive())) {
+            throw new ApiException("CATEGORY_INACTIVE", "Category is inactive", HttpStatus.BAD_REQUEST);
+        }
 
         product.setName(req.getName().trim());
         product.setCategoryId(category.getId());

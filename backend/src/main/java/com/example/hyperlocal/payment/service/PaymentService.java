@@ -27,7 +27,18 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestTemplate;
+
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,14 +55,15 @@ public class PaymentService {
     private final InventoryRepository inventoryRepository;
     private final InventoryMovementRepository movementRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private RestTemplate restTemplate;
 
-    @Value("${app.razorpay.key-id:rzp_test_placeholder}")
+    @Value("${app.razorpay.key-id:}")
     private String keyId;
 
-    @Value("${app.razorpay.key-secret:rzp_secret_placeholder}")
+    @Value("${app.razorpay.key-secret:}")
     private String keySecret;
 
-    @Value("${app.razorpay.webhook-secret:rzp_webhook_secret_placeholder}")
+    @Value("${app.razorpay.webhook-secret:}")
     private String webhookSecret;
 
     public PaymentService(
@@ -67,6 +79,19 @@ public class PaymentService {
         this.statusHistoryRepository = statusHistoryRepository;
         this.inventoryRepository = inventoryRepository;
         this.movementRepository = movementRepository;
+
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(10000);
+        this.restTemplate = new RestTemplate(factory);
+    }
+
+    public RestTemplate getRestTemplate() {
+        return restTemplate;
+    }
+
+    public void setRestTemplate(RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
     }
 
     @Transactional
@@ -82,20 +107,27 @@ public class PaymentService {
             throw new ApiException("ORDER_ALREADY_PAID", "Order has already been paid", HttpStatus.BAD_REQUEST);
         }
 
+        if (keyId == null || keyId.isBlank() || keySecret == null || keySecret.isBlank()) {
+            log.warn("Razorpay credentials are not configured in environment (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET)");
+            throw new ApiException("RAZORPAY_NOT_CONFIGURED",
+                    "Razorpay credentials are not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET environment variables.",
+                    HttpStatus.SERVICE_UNAVAILABLE);
+        }
+
         Payment payment = paymentRepository.findByOrderId(orderId).orElseGet(() -> {
             Payment p = new Payment(order.getId(), "RAZORPAY", order.getTotal(), order.getCurrency());
             return paymentRepository.save(p);
         });
 
+        long amountInPaise = order.getTotal().multiply(BigDecimal.valueOf(100)).longValue();
+
         String providerOrderId = payment.getProviderOrderId();
         if (providerOrderId == null || providerOrderId.isEmpty()) {
-            providerOrderId = "order_rzp_" + order.getId() + "_" + System.currentTimeMillis();
+            providerOrderId = createRazorpayOrder(order, amountInPaise);
             payment.setProviderOrderId(providerOrderId);
             payment.setStatus(PaymentStatus.INITIATED);
             paymentRepository.save(payment);
         }
-
-        long amountInPaise = order.getTotal().multiply(BigDecimal.valueOf(100)).longValue();
 
         PaymentOrderResponse response = new PaymentOrderResponse();
         response.setOrderId(order.getId());
@@ -108,6 +140,50 @@ public class PaymentService {
         response.setProvider("RAZORPAY");
 
         return response;
+    }
+
+    private String createRazorpayOrder(Order order, long amountInPaise) {
+        String url = "https://api.razorpay.com/v1/orders";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBasicAuth(keyId.trim(), keySecret.trim());
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("amount", amountInPaise);
+        body.put("currency", order.getCurrency() != null ? order.getCurrency() : "INR");
+        body.put("receipt", "order_rcpt_" + order.getId());
+
+        Map<String, Object> notes = new HashMap<>();
+        notes.put("orderId", String.valueOf(order.getId()));
+        notes.put("orderNumber", order.getOrderNumber());
+        notes.put("customerId", String.valueOf(order.getCustomerId()));
+        body.put("notes", notes);
+
+        HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+
+        try {
+            ResponseEntity<JsonNode> response = restTemplate.postForEntity(url, requestEntity, JsonNode.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                String razorpayOrderId = response.getBody().path("id").asText(null);
+                if (razorpayOrderId != null && !razorpayOrderId.isBlank()) {
+                    log.info("Successfully created Razorpay order {} for local order {}", razorpayOrderId, order.getId());
+                    return razorpayOrderId;
+                }
+            }
+            throw new ApiException("PAYMENT_GATEWAY_ERROR", "Failed to retrieve order ID from Razorpay response", HttpStatus.BAD_GATEWAY);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            log.error("Razorpay order creation failed with status {}: {}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new ApiException("PAYMENT_GATEWAY_ERROR", "Razorpay order creation failed: " + e.getStatusCode(), HttpStatus.BAD_GATEWAY);
+        } catch (ResourceAccessException e) {
+            log.error("Razorpay order creation timed out: {}", e.getMessage());
+            throw new ApiException("PAYMENT_GATEWAY_TIMEOUT", "Razorpay request timed out", HttpStatus.GATEWAY_TIMEOUT);
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Unexpected error creating Razorpay order: ", e);
+            throw new ApiException("PAYMENT_GATEWAY_ERROR", "Failed to initiate payment with Razorpay: " + e.getMessage(), HttpStatus.BAD_GATEWAY);
+        }
     }
 
     @Transactional
@@ -128,13 +204,37 @@ public class PaymentService {
             return PaymentDto.fromEntity(payment);
         }
 
-        // Signature verification
-        boolean isPlaceholderSecret = "rzp_secret_placeholder".equals(keySecret);
-        boolean isMockSignature = "mock_valid_signature".equals(req.getRazorpaySignature());
-        boolean signatureValid = isMockSignature || isPlaceholderSecret ||
-                RazorpaySignatureUtil.verifySignature(req.getRazorpayOrderId(), req.getRazorpayPaymentId(), req.getRazorpaySignature(), keySecret);
+        if (keySecret == null || keySecret.isBlank()) {
+            log.warn("Razorpay key secret is not configured in environment (RAZORPAY_KEY_SECRET)");
+            throw new ApiException("RAZORPAY_NOT_CONFIGURED",
+                    "Razorpay key secret is not configured. Please set the RAZORPAY_KEY_SECRET environment variable.",
+                    HttpStatus.SERVICE_UNAVAILABLE);
+        }
+
+        if (req.getRazorpayOrderId() == null || req.getRazorpayPaymentId() == null || req.getRazorpaySignature() == null) {
+            payment.setStatus(PaymentStatus.FAILED);
+            paymentRepository.save(payment);
+            throw new ApiException("INVALID_PAYMENT_SIGNATURE", "Missing payment verification parameters", HttpStatus.BAD_REQUEST);
+        }
+
+        if (payment.getProviderOrderId() != null && !payment.getProviderOrderId().equals(req.getRazorpayOrderId())) {
+            log.warn("Mismatched provider order ID for order {}: expected {}, received {}",
+                    order.getId(), payment.getProviderOrderId(), req.getRazorpayOrderId());
+            payment.setStatus(PaymentStatus.FAILED);
+            paymentRepository.save(payment);
+            throw new ApiException("INVALID_PAYMENT_SIGNATURE", "Razorpay order ID mismatch", HttpStatus.BAD_REQUEST);
+        }
+
+        // Strict HMAC-SHA256 signature verification (No bypasses)
+        boolean signatureValid = RazorpaySignatureUtil.verifySignature(
+                req.getRazorpayOrderId(),
+                req.getRazorpayPaymentId(),
+                req.getRazorpaySignature(),
+                keySecret.trim()
+        );
 
         if (!signatureValid) {
+            log.warn("Invalid Razorpay signature for order {}", order.getId());
             payment.setStatus(PaymentStatus.FAILED);
             paymentRepository.save(payment);
             throw new ApiException("INVALID_PAYMENT_SIGNATURE", "Payment signature verification failed", HttpStatus.BAD_REQUEST);
@@ -177,12 +277,39 @@ public class PaymentService {
 
         // 4. ATOMIC INVENTORY DEDUCTION (with Pessimistic Lock)
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+
+        // Phase 1: Verify all stock availability first
         for (OrderItem item : items) {
             Inventory inventory = inventoryRepository.findWithLockByProductId(item.getProductId())
                     .orElseThrow(() -> new ApiException("INVENTORY_NOT_FOUND", "Inventory not found for product: " + item.getProductId(), HttpStatus.NOT_FOUND));
 
+            if (inventory.getAvailableQuantity() < item.getQuantity()) {
+                log.error("Stock shortage for product {}: requested {}, available {}",
+                        item.getProductId(), item.getQuantity(), inventory.getAvailableQuantity());
+                payment.setStatus(PaymentStatus.FAILED);
+                paymentRepository.save(payment);
+
+                order.setPaymentStatus(PaymentStatus.FAILED);
+                order.setOrderStatus(OrderStatus.CANCELLED);
+                orderRepository.save(order);
+
+                OrderStatusHistory failHistory = new OrderStatusHistory(
+                        order.getId(),
+                        OrderStatus.PAYMENT_PENDING,
+                        OrderStatus.CANCELLED,
+                        actorUserId,
+                        "Order cancelled due to insufficient inventory for product: " + item.getProductNameSnapshot()
+                );
+                statusHistoryRepository.save(failHistory);
+                throw new ApiException("INSUFFICIENT_STOCK", "Insufficient stock for product: " + item.getProductNameSnapshot(), HttpStatus.CONFLICT);
+            }
+        }
+
+        // Phase 2: Deduct stock after all items verified
+        for (OrderItem item : items) {
+            Inventory inventory = inventoryRepository.findWithLockByProductId(item.getProductId()).get();
             int previousQty = inventory.getAvailableQuantity();
-            int newQty = Math.max(0, previousQty - item.getQuantity());
+            int newQty = previousQty - item.getQuantity();
             inventory.setAvailableQuantity(newQty);
             inventoryRepository.save(inventory);
 
@@ -205,13 +332,20 @@ public class PaymentService {
     public Map<String, Object> handleWebhook(String rawPayload, String signatureHeader) {
         log.info("Received Razorpay Webhook notification");
 
-        boolean isPlaceholderSecret = "rzp_webhook_secret_placeholder".equals(webhookSecret);
-        if (!isPlaceholderSecret && signatureHeader != null) {
-            boolean valid = RazorpaySignatureUtil.verifyWebhookSignature(rawPayload, signatureHeader, webhookSecret);
-            if (!valid) {
-                log.warn("Invalid Razorpay webhook signature");
-                throw new ApiException("INVALID_WEBHOOK_SIGNATURE", "Webhook signature verification failed", HttpStatus.BAD_REQUEST);
-            }
+        if (signatureHeader == null || signatureHeader.isBlank()) {
+            log.warn("Webhook received without signature header");
+            throw new ApiException("INVALID_WEBHOOK_SIGNATURE", "Missing webhook signature header", HttpStatus.BAD_REQUEST);
+        }
+
+        if (webhookSecret == null || webhookSecret.isBlank()) {
+            log.warn("Webhook received but RAZORPAY_WEBHOOK_SECRET is not configured");
+            throw new ApiException("WEBHOOK_NOT_CONFIGURED", "Webhook signature secret is not configured", HttpStatus.BAD_REQUEST);
+        }
+
+        boolean valid = RazorpaySignatureUtil.verifyWebhookSignature(rawPayload, signatureHeader, webhookSecret.trim());
+        if (!valid) {
+            log.warn("Invalid Razorpay webhook signature");
+            throw new ApiException("INVALID_WEBHOOK_SIGNATURE", "Webhook signature verification failed", HttpStatus.BAD_REQUEST);
         }
 
         try {

@@ -29,13 +29,6 @@ public class RateLimitingFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             FilterChain filterChain) throws ServletException, IOException {
 
-        // Check if rate limiting should be skipped (e.g. test bypass header)
-        String bypass = request.getHeader("X-RateLimit-Bypass");
-        if ("test-suite-bypass".equals(bypass)) {
-            filterChain.doFilter(request, response);
-            return;
-        }
-
         String path = request.getRequestURI();
         String method = request.getMethod();
         String ip = getClientIp(request);

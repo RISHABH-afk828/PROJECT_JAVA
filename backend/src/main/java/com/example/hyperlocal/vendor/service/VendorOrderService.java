@@ -14,6 +14,7 @@ import com.example.hyperlocal.order.repository.OrderItemRepository;
 import com.example.hyperlocal.order.repository.OrderRepository;
 import com.example.hyperlocal.order.repository.OrderStatusHistoryRepository;
 import com.example.hyperlocal.order.service.OrderService;
+import com.example.hyperlocal.payment.entity.PaymentStatus;
 import com.example.hyperlocal.vendor.entity.Vendor;
 import com.example.hyperlocal.vendor.repository.VendorRepository;
 import org.slf4j.Logger;
@@ -212,26 +213,30 @@ public class VendorOrderService {
         );
         statusHistoryRepository.save(history);
 
-        // RESTORE INVENTORY
-        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
-        for (OrderItem item : items) {
-            Inventory inv = inventoryRepository.findWithLockByProductId(item.getProductId()).orElse(null);
-            if (inv != null) {
-                int restored = inv.getAvailableQuantity() + item.getQuantity();
-                inv.setAvailableQuantity(restored);
-                inventoryRepository.save(inv);
+        // RESTORE INVENTORY ONLY IF DEDUCTED AND NOT ALREADY RESTORED
+        boolean wasInventoryDeducted = order.getPaymentStatus() == PaymentStatus.CAPTURED;
+        boolean alreadyRestored = movementRepository.existsByReferenceIdAndReason(String.valueOf(order.getId()), "ORDER_REJECTED");
+        if (wasInventoryDeducted && !alreadyRestored) {
+            List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+            for (OrderItem item : items) {
+                Inventory inv = inventoryRepository.findWithLockByProductId(item.getProductId()).orElse(null);
+                if (inv != null) {
+                    int restored = inv.getAvailableQuantity() + item.getQuantity();
+                    inv.setAvailableQuantity(restored);
+                    inventoryRepository.save(inv);
 
-                InventoryMovement movement = new InventoryMovement(
-                        item.getProductId(),
-                        item.getQuantity(),
-                        restored,
-                        "CANCEL_RESTORE",
-                        "ORDER_REJECTED",
-                        String.valueOf(order.getId()),
-                        ownerUserId
-                );
-                movementRepository.save(movement);
-                log.info("Restored {} units of product {} due to vendor rejection", item.getQuantity(), item.getProductId());
+                    InventoryMovement movement = new InventoryMovement(
+                            item.getProductId(),
+                            item.getQuantity(),
+                            restored,
+                            "CANCEL_RESTORE",
+                            "ORDER_REJECTED",
+                            String.valueOf(order.getId()),
+                            ownerUserId
+                    );
+                    movementRepository.save(movement);
+                    log.info("Restored {} units of product {} due to vendor rejection of captured order {}", item.getQuantity(), item.getProductId(), order.getId());
+                }
             }
         }
 

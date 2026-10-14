@@ -1,76 +1,176 @@
 package com.example.hyperlocal.location.service;
 
+import com.example.hyperlocal.common.exception.ApiException;
 import com.example.hyperlocal.common.util.HaversineUtil;
 import com.example.hyperlocal.vendor.entity.Vendor;
 import com.example.hyperlocal.vendor.entity.VendorStatus;
 import com.example.hyperlocal.vendor.repository.VendorRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.time.Duration;
 import java.util.*;
 
 @Service
 public class LocationService {
 
-    private final VendorRepository vendorRepository;
+    private static final Logger log = LoggerFactory.getLogger(LocationService.class);
 
-    @Value("${app.google-maps.api-key:mock_key}")
-    private String googleMapsApiKey;
+    private final VendorRepository vendorRepository;
+    private RestTemplate restTemplate;
+
+    @Value("${app.geoapify.api-key:}")
+    private String geoapifyApiKey;
 
     public LocationService(VendorRepository vendorRepository) {
         this.vendorRepository = vendorRepository;
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(5));
+        factory.setReadTimeout(Duration.ofSeconds(5));
+        this.restTemplate = new RestTemplate(factory);
     }
 
-    public Map<String, Object> reverseGeocode(double lat, double lng) {
-        // Return structured address components for the coordinates
-        // In dev/mock mode or fallback, provide accurate locality estimation
-        String locality = estimateLocality(lat, lng);
-        return Map.of(
-                "latitude", lat,
-                "longitude", lng,
-                "formattedAddress", locality + ", Bengaluru, Karnataka, India",
-                "locality", locality,
-                "city", "Bengaluru",
-                "state", "Karnataka",
-                "postalCode", "560034"
-        );
+    public RestTemplate getRestTemplate() {
+        return restTemplate;
+    }
+
+    public void setRestTemplate(RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
     }
 
     public List<Map<String, Object>> searchLocations(String query) {
         if (query == null || query.trim().isEmpty()) {
             return Collections.emptyList();
         }
-        String q = query.trim().toLowerCase();
 
-        List<Map<String, Object>> commonLocations = List.of(
-                Map.of("label", "Koramangala, Bengaluru", "lat", 12.9352, "lng", 77.6245, "locality", "Koramangala", "city", "Bengaluru"),
-                Map.of("label", "Indiranagar, Bengaluru", "lat", 12.9784, "lng", 77.6408, "locality", "Indiranagar", "city", "Bengaluru"),
-                Map.of("label", "HSR Layout, Bengaluru", "lat", 12.9121, "lng", 77.6446, "locality", "HSR Layout", "city", "Bengaluru"),
-                Map.of("label", "Whitefield, Bengaluru", "lat", 12.9698, "lng", 77.7500, "locality", "Whitefield", "city", "Bengaluru"),
-                Map.of("label", "Jayanagar, Bengaluru", "lat", 12.9308, "lng", 77.5838, "locality", "Jayanagar", "city", "Bengaluru"),
-                Map.of("label", "MG Road, Bengaluru", "lat", 12.9756, "lng", 77.6066, "locality", "MG Road", "city", "Bengaluru")
-        );
+        if (geoapifyApiKey == null || geoapifyApiKey.isBlank()) {
+            log.warn("Geoapify API key is not configured in environment (GEOAPIFY_API_KEY)");
+            throw new ApiException("GEOAPIFY_KEY_NOT_CONFIGURED",
+                    "Geoapify API key is not configured. Please set the GEOAPIFY_API_KEY environment variable.",
+                    HttpStatus.SERVICE_UNAVAILABLE);
+        }
 
-        List<Map<String, Object>> matches = new ArrayList<>();
-        for (Map<String, Object> loc : commonLocations) {
-            String label = (String) loc.get("label");
-            if (label.toLowerCase().contains(q)) {
-                matches.add(loc);
+        String url = UriComponentsBuilder.fromHttpUrl("https://api.geoapify.com/v1/geocode/search")
+                .queryParam("text", query.trim())
+                .queryParam("format", "json")
+                .queryParam("limit", 10)
+                .queryParam("apiKey", geoapifyApiKey)
+                .build()
+                .toUriString();
+
+        try {
+            ResponseEntity<JsonNode> response = restTemplate.getForEntity(url, JsonNode.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                JsonNode results = response.getBody().path("results");
+                if (results.isArray()) {
+                    List<Map<String, Object>> list = new ArrayList<>();
+                    for (JsonNode r : results) {
+                        Map<String, Object> item = new LinkedHashMap<>();
+                        item.put("label", r.path("formatted").asText(""));
+                        item.put("lat", r.path("lat").asDouble());
+                        item.put("lng", r.path("lon").asDouble());
+
+                        String locality = "";
+                        if (r.hasNonNull("suburb")) {
+                            locality = r.path("suburb").asText();
+                        } else if (r.hasNonNull("neighbourhood")) {
+                            locality = r.path("neighbourhood").asText();
+                        } else if (r.hasNonNull("district")) {
+                            locality = r.path("district").asText();
+                        } else if (r.hasNonNull("city")) {
+                            locality = r.path("city").asText();
+                        }
+                        item.put("locality", locality);
+                        item.put("city", r.path("city").asText(""));
+                        list.add(item);
+                    }
+                    return list;
+                }
             }
+            return Collections.emptyList();
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            log.error("Geoapify search failed with status: {}", e.getStatusCode());
+            throw new ApiException("LOCATION_SERVICE_ERROR", "Geoapify location search failed: " + e.getStatusCode(), HttpStatus.BAD_GATEWAY);
+        } catch (ResourceAccessException e) {
+            log.error("Geoapify search timed out: {}", e.getMessage());
+            throw new ApiException("LOCATION_SERVICE_TIMEOUT", "Geoapify request timed out", HttpStatus.GATEWAY_TIMEOUT);
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Unexpected error in Geoapify search: ", e);
+            throw new ApiException("LOCATION_SERVICE_ERROR", "Failed to search location: " + e.getMessage(), HttpStatus.BAD_GATEWAY);
+        }
+    }
+
+    public Map<String, Object> reverseGeocode(double lat, double lng) {
+        if (geoapifyApiKey == null || geoapifyApiKey.isBlank()) {
+            log.warn("Geoapify API key is not configured in environment (GEOAPIFY_API_KEY)");
+            throw new ApiException("GEOAPIFY_KEY_NOT_CONFIGURED",
+                    "Geoapify API key is not configured. Please set the GEOAPIFY_API_KEY environment variable.",
+                    HttpStatus.SERVICE_UNAVAILABLE);
         }
 
-        if (matches.isEmpty()) {
-            // Provide a dynamic result for user's query
-            matches.add(Map.of(
-                    "label", query.trim() + ", Bengaluru",
-                    "lat", 12.9352,
-                    "lng", 77.6245,
-                    "locality", query.trim(),
-                    "city", "Bengaluru"
-            ));
-        }
+        String url = UriComponentsBuilder.fromHttpUrl("https://api.geoapify.com/v1/geocode/reverse")
+                .queryParam("lat", lat)
+                .queryParam("lon", lng)
+                .queryParam("format", "json")
+                .queryParam("limit", 1)
+                .queryParam("apiKey", geoapifyApiKey)
+                .build()
+                .toUriString();
 
-        return matches;
+        try {
+            ResponseEntity<JsonNode> response = restTemplate.getForEntity(url, JsonNode.class);
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                JsonNode results = response.getBody().path("results");
+                if (results.isArray() && !results.isEmpty()) {
+                    JsonNode r = results.get(0);
+                    Map<String, Object> map = new LinkedHashMap<>();
+                    map.put("latitude", r.path("lat").asDouble(lat));
+                    map.put("longitude", r.path("lon").asDouble(lng));
+                    map.put("formattedAddress", r.path("formatted").asText(""));
+
+                    String locality = "";
+                    if (r.hasNonNull("suburb")) {
+                        locality = r.path("suburb").asText();
+                    } else if (r.hasNonNull("neighbourhood")) {
+                        locality = r.path("neighbourhood").asText();
+                    } else if (r.hasNonNull("district")) {
+                        locality = r.path("district").asText();
+                    } else if (r.hasNonNull("city")) {
+                        locality = r.path("city").asText();
+                    }
+                    map.put("locality", locality);
+                    map.put("city", r.path("city").asText(""));
+                    map.put("state", r.path("state").asText(""));
+                    map.put("postalCode", r.path("postcode").asText(""));
+                    return map;
+                }
+            }
+            throw new ApiException("LOCATION_NOT_FOUND", "No address found for specified coordinates", HttpStatus.NOT_FOUND);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            log.error("Geoapify reverse-geocode failed with status: {}", e.getStatusCode());
+            throw new ApiException("LOCATION_SERVICE_ERROR", "Geoapify reverse geocode failed: " + e.getStatusCode(), HttpStatus.BAD_GATEWAY);
+        } catch (ResourceAccessException e) {
+            log.error("Geoapify reverse-geocode timed out: {}", e.getMessage());
+            throw new ApiException("LOCATION_SERVICE_TIMEOUT", "Geoapify request timed out", HttpStatus.GATEWAY_TIMEOUT);
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Unexpected error in Geoapify reverse-geocode: ", e);
+            throw new ApiException("LOCATION_SERVICE_ERROR", "Failed to reverse geocode: " + e.getMessage(), HttpStatus.BAD_GATEWAY);
+        }
     }
 
     public Map<String, Object> checkServiceability(double lat, double lng) {
@@ -94,12 +194,5 @@ public class LocationService {
                         ? "Service available in your area with " + serviceableVendors + " stores!"
                         : "No participating local stores are currently delivering to this exact location."
         );
-    }
-
-    private String estimateLocality(double lat, double lng) {
-        if (Math.abs(lat - 12.9352) < 0.02 && Math.abs(lng - 77.6245) < 0.02) return "Koramangala 4th Block";
-        if (Math.abs(lat - 12.9784) < 0.02 && Math.abs(lng - 77.6408) < 0.02) return "Indiranagar 100 Feet Rd";
-        if (Math.abs(lat - 12.9121) < 0.02 && Math.abs(lng - 77.6446) < 0.02) return "HSR Layout Sector 2";
-        return "Bangalore Urban";
     }
 }

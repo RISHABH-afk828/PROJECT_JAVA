@@ -66,10 +66,30 @@ apiClient.interceptors.response.use(
     }
 
     // Normalize error payload from ApiResponse
-    const errData = error.response?.data?.error || {
-      code: error.code || 'NETWORK_ERROR',
-      message: error.response?.data?.message || error.message || 'Something went wrong. Please check your connection.',
-      details: error.response?.data?.details || null,
+    let errCode = error.code || 'NETWORK_ERROR';
+    let errMessage = error.message || 'Something went wrong. Please check your connection.';
+    let errDetails = null;
+
+    if (error.response?.data) {
+      const data = error.response.data;
+      if (data.error && typeof data.error === 'object') {
+        errCode = data.error.code || errCode;
+        errMessage = data.error.message || errMessage;
+        errDetails = data.error.details || null;
+      } else if (typeof data.error === 'string') {
+        errCode = data.error;
+        errMessage = data.message || data.error;
+      } else if (data.message) {
+        errMessage = data.message;
+        errCode = data.code || 'API_ERROR';
+      }
+    }
+
+    const errData = {
+      code: errCode,
+      message: errMessage,
+      details: errDetails,
+      status: error.response?.status,
     };
 
     return Promise.reject(errData);
