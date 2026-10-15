@@ -56,11 +56,15 @@ export default function LocationModal({ show, onClose, onSelectLocation, current
           const lng = position.coords.longitude;
           const res = await apiClient.get(`/locations/reverse-geocode?lat=${lat}&lng=${lng}`);
           const loc = {
-            label: res.formattedAddress || `${res.locality || 'Detected Area'}, ${res.city || 'Bengaluru'}`,
+            label: res.formattedAddress || [res.locality, res.city, res.state].filter(Boolean).join(', ') || 'Current Location',
             lat,
             lng,
-            locality: res.locality,
-            city: res.city,
+            locality: res.locality || '',
+            city: res.city || '',
+            state: res.state || '',
+            postalCode: res.postalCode || '',
+            street: res.street || '',
+            house: res.house || '',
           };
           onSelectLocation(loc);
           onClose();
@@ -142,7 +146,7 @@ export default function LocationModal({ show, onClose, onSelectLocation, current
                 <input
                   type="text"
                   className="form-control border-start-0"
-                  placeholder="e.g. Koramangala, Indiranagar, HSR..."
+                  placeholder="Search area, locality, street or pincode..."
                   value={searchQuery}
                   onChange={(e) => handleSearch(e.target.value)}
                   autoFocus
@@ -158,7 +162,17 @@ export default function LocationModal({ show, onClose, onSelectLocation, current
                     key={idx}
                     type="button"
                     className="list-group-item list-group-item-action text-start py-2 d-flex align-items-center gap-2"
-                    onClick={() => handlePickLocation({ label: res.label, lat: res.lat, lng: res.lng })}
+                    onClick={() => handlePickLocation({
+                      label: res.label || res.formattedAddress,
+                      lat: res.lat,
+                      lng: res.lng,
+                      locality: res.locality || '',
+                      city: res.city || '',
+                      state: res.state || '',
+                      postalCode: res.postalCode || '',
+                      street: res.street || '',
+                      house: res.house || '',
+                    })}
                   >
                     <i className="bi bi-geo-alt text-muted" />
                     <span className="small text-truncate">{res.label}</span>
@@ -179,10 +193,16 @@ export default function LocationModal({ show, onClose, onSelectLocation, current
                       style={{ cursor: 'pointer' }}
                       onClick={() =>
                         handlePickLocation({
-                          label: `${addr.label}: ${addr.house}, ${addr.locality}`,
+                          label: `${addr.label}: ${addr.house ? addr.house + ', ' : ''}${addr.locality || addr.city || ''}`,
                           lat: addr.latitude,
                           lng: addr.longitude,
                           addressId: addr.id,
+                          locality: addr.locality || '',
+                          city: addr.city || '',
+                          state: addr.state || '',
+                          postalCode: addr.postalCode || '',
+                          street: addr.street || '',
+                          house: addr.house || '',
                         })
                       }
                     >

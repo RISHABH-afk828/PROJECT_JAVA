@@ -16,19 +16,24 @@ export default function CheckoutPage() {
   const [loadingAddresses, setLoadingAddresses] = useState(true);
 
   // Address creation form modal state
-  const [showAddressModal, setShowAddressModal] = useState(false);
-  const [newAddress, setNewAddress] = useState({
+  const initialAddressState = {
     label: 'Home',
     house: '',
     street: '',
     locality: '',
-    city: 'Bengaluru',
-    state: 'Karnataka',
-    postalCode: '560034',
-    latitude: 12.9352,
-    longitude: 77.6245,
+    city: '',
+    state: '',
+    postalCode: '',
+    latitude: null,
+    longitude: null,
     deliveryInstructions: '',
-  });
+  };
+  const [showAddressModal, setShowAddressModal] = useState(false);
+  const [newAddress, setNewAddress] = useState(initialAddressState);
+  const [addressModalError, setAddressModalError] = useState(null);
+  const [addressGeoLoading, setAddressGeoLoading] = useState(false);
+  const [addressSearchQuery, setAddressSearchQuery] = useState('');
+  const [addressSearchResults, setAddressSearchResults] = useState([]);
 
   // Cart & Quote state
   const [cart, setCart] = useState(null);
@@ -72,27 +77,112 @@ export default function CheckoutPage() {
     }
   };
 
+  const handleUseCurrentLocationInModal = () => {
+    if (!navigator.geolocation) {
+      setAddressModalError('Geolocation is not supported by your browser.');
+      return;
+    }
+    setAddressGeoLoading(true);
+    setAddressModalError(null);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const res = await apiClient.get(`/locations/reverse-geocode?lat=${lat}&lng=${lng}`);
+          setNewAddress((prev) => ({
+            ...prev,
+            latitude: Number(lat.toFixed(6)),
+            longitude: Number(lng.toFixed(6)),
+            city: res.city || prev.city,
+            state: res.state || prev.state,
+            postalCode: res.postalCode || prev.postalCode,
+            locality: res.locality || prev.locality,
+            street: res.street || prev.street,
+            house: res.house || prev.house,
+          }));
+        } catch {
+          setNewAddress((prev) => ({
+            ...prev,
+            latitude: Number(pos.coords.latitude.toFixed(6)),
+            longitude: Number(pos.coords.longitude.toFixed(6)),
+          }));
+        } finally {
+          setAddressGeoLoading(false);
+        }
+      },
+      (err) => {
+        setAddressGeoLoading(false);
+        if (err.code === 1) {
+          setAddressModalError('Location permission denied. Please search your locality or address manually.');
+        } else {
+          setAddressModalError('Could not detect current location. Please search manually.');
+        }
+      },
+      { timeout: 10000, enableHighAccuracy: true }
+    );
+  };
+
+  const handleSearchAddressInModal = async (query) => {
+    setAddressSearchQuery(query);
+    if (!query.trim()) {
+      setAddressSearchResults([]);
+      return;
+    }
+    try {
+      const res = await apiClient.get(`/locations/search?q=${encodeURIComponent(query.trim())}`);
+      setAddressSearchResults(res || []);
+    } catch {
+      setAddressSearchResults([]);
+    }
+  };
+
+  const handleSelectSearchResultInModal = (res) => {
+    setNewAddress((prev) => ({
+      ...prev,
+      latitude: res.lat != null ? Number(Number(res.lat).toFixed(6)) : prev.latitude,
+      longitude: res.lng != null ? Number(Number(res.lng).toFixed(6)) : prev.longitude,
+      city: res.city || prev.city,
+      state: res.state || prev.state,
+      postalCode: res.postalCode || prev.postalCode,
+      locality: res.locality || prev.locality,
+      street: res.street || prev.street,
+      house: res.house || prev.house,
+    }));
+    setAddressSearchQuery('');
+    setAddressSearchResults([]);
+  };
+
   const handleCreateAddress = async (e) => {
     e.preventDefault();
+    if (newAddress.latitude == null || newAddress.longitude == null || isNaN(newAddress.latitude) || isNaN(newAddress.longitude)) {
+      setAddressModalError('Please use GPS or Search to set delivery coordinates for this address.');
+      return;
+    }
+    if (!newAddress.city.trim() || !newAddress.state.trim() || !newAddress.postalCode.trim() || !newAddress.house.trim() || !newAddress.street.trim() || !newAddress.locality.trim()) {
+      setAddressModalError('Please fill in all required address fields.');
+      return;
+    }
     try {
-      const created = await apiClient.post('/users/me/addresses', newAddress);
+      const created = await apiClient.post('/users/me/addresses', {
+        ...newAddress,
+        house: newAddress.house.trim(),
+        street: newAddress.street.trim(),
+        locality: newAddress.locality.trim(),
+        city: newAddress.city.trim(),
+        state: newAddress.state.trim(),
+        postalCode: newAddress.postalCode.trim(),
+        deliveryInstructions: newAddress.deliveryInstructions ? newAddress.deliveryInstructions.trim() : '',
+      });
       setAddresses((prev) => [created, ...prev]);
       setSelectedAddressId(created.id);
       setShowAddressModal(false);
-      setNewAddress({
-        label: 'Home',
-        house: '',
-        street: '',
-        locality: '',
-        city: 'Bengaluru',
-        state: 'Karnataka',
-        postalCode: '560034',
-        latitude: 12.9352,
-        longitude: 77.6245,
-        deliveryInstructions: '',
-      });
+      setNewAddress(initialAddressState);
+      setAddressSearchQuery('');
+      setAddressSearchResults([]);
+      setAddressModalError(null);
     } catch (err) {
-      alert(err.message || 'Failed to save address');
+      setAddressModalError(err.message || 'Failed to save address');
     }
   };
 
@@ -136,7 +226,10 @@ export default function CheckoutPage() {
         }
 
         // 1. Create Order
-        const order = await apiClient.post('/checkout/create', { addressId: selectedAddressId });
+        const order = await apiClient.post('/checkout/create', {
+          addressId: selectedAddressId,
+          paymentMethod: 'RAZORPAY',
+        });
         if (setCartCount) setCartCount(0);
         localStorage.removeItem('cart');
 
@@ -192,8 +285,11 @@ export default function CheckoutPage() {
         });
         rzp.open();
       } else {
-        // COD fallback
-        const order = await apiClient.post('/checkout/create', { addressId: selectedAddressId });
+        // COD order
+        const order = await apiClient.post('/checkout/create', {
+          addressId: selectedAddressId,
+          paymentMethod: 'COD',
+        });
         if (setCartCount) setCartCount(0);
         localStorage.removeItem('cart');
         navigate(`/orders/${order.id}`, { state: { justPlaced: true, orderNumber: order.orderNumber } });
@@ -549,6 +645,69 @@ export default function CheckoutPage() {
                   <button type="button" className="btn-close" onClick={() => setShowAddressModal(false)} />
                 </div>
                 <div className="modal-body p-4 vstack gap-3">
+                  {addressModalError && (
+                    <div className="alert alert-danger py-2 px-3 small mb-0">
+                      <i className="bi bi-exclamation-circle-fill me-2" />
+                      {addressModalError}
+                    </div>
+                  )}
+
+                  {/* GPS & Autocomplete */}
+                  <div>
+                    <button
+                      type="button"
+                      className="btn btn-outline-primary btn-sm w-100 d-flex align-items-center justify-content-center gap-2 py-2 mb-2"
+                      disabled={addressGeoLoading}
+                      onClick={handleUseCurrentLocationInModal}
+                    >
+                      <i className="bi bi-crosshair" />
+                      <span>{addressGeoLoading ? 'Detecting Location...' : 'Use My Current GPS Location'}</span>
+                    </button>
+
+                    <div className="input-group input-group-sm">
+                      <span className="input-group-text bg-white">
+                        <i className="bi bi-search text-muted" />
+                      </span>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Search area, landmark or street to autofill..."
+                        value={addressSearchQuery}
+                        onChange={(e) => handleSearchAddressInModal(e.target.value)}
+                      />
+                    </div>
+                    {addressSearchResults.length > 0 && (
+                      <div className="list-group shadow-sm mt-1 position-relative" style={{ maxHeight: '150px', overflowY: 'auto', zIndex: 10 }}>
+                        {addressSearchResults.map((res, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            className="list-group-item list-group-item-action text-start py-2 small d-flex align-items-center gap-2"
+                            onClick={() => handleSelectSearchResultInModal(res)}
+                          >
+                            <i className="bi bi-geo-alt text-muted" />
+                            <span className="text-truncate">{res.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Coordinates Status */}
+                  <div>
+                    {newAddress.latitude != null && newAddress.longitude != null ? (
+                      <span className="badge bg-success-subtle text-success border border-success small">
+                        <i className="bi bi-geo-alt-fill me-1" />
+                        Coordinates: {newAddress.latitude.toFixed(4)}, {newAddress.longitude.toFixed(4)}
+                      </span>
+                    ) : (
+                      <span className="badge bg-warning-subtle text-warning-emphasis border border-warning small">
+                        <i className="bi bi-exclamation-circle me-1" />
+                        Coordinates not set — click GPS button or select from search
+                      </span>
+                    )}
+                  </div>
+
                   <div>
                     <label className="form-label small fw-semibold">Label</label>
                     <select
@@ -562,7 +721,7 @@ export default function CheckoutPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="form-label small fw-semibold">Flat / House / Floor</label>
+                    <label className="form-label small fw-semibold">Flat / House / Floor *</label>
                     <input
                       type="text"
                       className="form-control form-control-sm"
@@ -573,7 +732,7 @@ export default function CheckoutPage() {
                     />
                   </div>
                   <div>
-                    <label className="form-label small fw-semibold">Street / Area</label>
+                    <label className="form-label small fw-semibold">Street / Area *</label>
                     <input
                       type="text"
                       className="form-control form-control-sm"
@@ -585,25 +744,49 @@ export default function CheckoutPage() {
                   </div>
                   <div className="row g-2">
                     <div className="col-6">
-                      <label className="form-label small fw-semibold">Locality</label>
+                      <label className="form-label small fw-semibold">Locality *</label>
                       <input
                         type="text"
                         className="form-control form-control-sm"
                         required
-                        placeholder="e.g. Koramangala"
+                        placeholder="e.g. Bandra West, Virar East"
                         value={newAddress.locality}
                         onChange={(e) => setNewAddress({ ...newAddress, locality: e.target.value })}
                       />
                     </div>
                     <div className="col-6">
-                      <label className="form-label small fw-semibold">Postal Code</label>
+                      <label className="form-label small fw-semibold">Postal Code *</label>
                       <input
                         type="text"
                         className="form-control form-control-sm"
                         required
-                        placeholder="e.g. 560034"
+                        placeholder="e.g. 401305"
                         value={newAddress.postalCode}
                         onChange={(e) => setNewAddress({ ...newAddress, postalCode: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="row g-2">
+                    <div className="col-6">
+                      <label className="form-label small fw-semibold">City *</label>
+                      <input
+                        type="text"
+                        className="form-control form-control-sm"
+                        required
+                        placeholder="e.g. Mumbai, Palghar"
+                        value={newAddress.city}
+                        onChange={(e) => setNewAddress({ ...newAddress, city: e.target.value })}
+                      />
+                    </div>
+                    <div className="col-6">
+                      <label className="form-label small fw-semibold">State *</label>
+                      <input
+                        type="text"
+                        className="form-control form-control-sm"
+                        required
+                        placeholder="e.g. Maharashtra"
+                        value={newAddress.state}
+                        onChange={(e) => setNewAddress({ ...newAddress, state: e.target.value })}
                       />
                     </div>
                   </div>

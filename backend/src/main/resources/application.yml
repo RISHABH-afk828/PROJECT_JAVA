@@ -23,8 +23,8 @@ app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
   razorpay:
-    key-id: ${RAZORPAY_KEY_ID:rzp_test_TiMB5R7MBxCQgN}
-    key-secret: ${RAZORPAY_KEY_SECRET:IbMNZIkf6u4HeaQggK5THxPB}
+    key-id: ${RAZORPAY_KEY_ID:rzp_test_To6Ud0bNSHhV9P}
+    key-secret: ${RAZORPAY_KEY_SECRET:mZ6MrqGZQogCdGB6dteE8s9S}
     webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
   geoapify:
     api-key: ${GEOAPIFY_API_KEY:12dcba061e6d4a0c9f78494c3ccc46bf}

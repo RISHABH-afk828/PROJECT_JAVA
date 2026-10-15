@@ -12,6 +12,8 @@ import com.example.hyperlocal.checkout.dto.CheckoutQuoteRequest;
 import com.example.hyperlocal.common.exception.ApiException;
 import com.example.hyperlocal.common.util.HaversineUtil;
 import com.example.hyperlocal.inventory.entity.Inventory;
+import com.example.hyperlocal.inventory.entity.InventoryMovement;
+import com.example.hyperlocal.inventory.repository.InventoryMovementRepository;
 import com.example.hyperlocal.inventory.repository.InventoryRepository;
 import com.example.hyperlocal.order.dto.OrderDto;
 import com.example.hyperlocal.order.dto.OrderItemDto;
@@ -22,6 +24,7 @@ import com.example.hyperlocal.order.entity.OrderStatusHistory;
 import com.example.hyperlocal.order.repository.OrderItemRepository;
 import com.example.hyperlocal.order.repository.OrderRepository;
 import com.example.hyperlocal.order.repository.OrderStatusHistoryRepository;
+import com.example.hyperlocal.payment.entity.PaymentMethod;
 import com.example.hyperlocal.payment.entity.PaymentStatus;
 import com.example.hyperlocal.product.entity.Product;
 import com.example.hyperlocal.product.repository.ProductRepository;
@@ -48,6 +51,7 @@ public class CheckoutService {
     private final VendorRepository vendorRepository;
     private final ProductRepository productRepository;
     private final InventoryRepository inventoryRepository;
+    private final InventoryMovementRepository inventoryMovementRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final OrderStatusHistoryRepository orderStatusHistoryRepository;
@@ -61,6 +65,7 @@ public class CheckoutService {
             VendorRepository vendorRepository,
             ProductRepository productRepository,
             InventoryRepository inventoryRepository,
+            InventoryMovementRepository inventoryMovementRepository,
             OrderRepository orderRepository,
             OrderItemRepository orderItemRepository,
             OrderStatusHistoryRepository orderStatusHistoryRepository,
@@ -71,6 +76,7 @@ public class CheckoutService {
         this.vendorRepository = vendorRepository;
         this.productRepository = productRepository;
         this.inventoryRepository = inventoryRepository;
+        this.inventoryMovementRepository = inventoryMovementRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
@@ -101,6 +107,8 @@ public class CheckoutService {
 
         String orderNumber = "ORD-" + System.currentTimeMillis() + "-" + (1000 + random.nextInt(9000));
 
+        PaymentMethod paymentMethod = req.getPaymentMethod() != null ? req.getPaymentMethod() : PaymentMethod.RAZORPAY;
+
         Order order = new Order();
         order.setOrderNumber(orderNumber);
         order.setCustomerId(userId);
@@ -112,8 +120,14 @@ public class CheckoutService {
         order.setDiscount(ctx.discount);
         order.setTotal(ctx.total);
         order.setCurrency("INR");
-        order.setOrderStatus(OrderStatus.PAYMENT_PENDING);
-        order.setPaymentStatus(PaymentStatus.CREATED);
+        order.setPaymentMethod(paymentMethod);
+        if (paymentMethod == PaymentMethod.COD) {
+            order.setOrderStatus(OrderStatus.VENDOR_PENDING);
+            order.setPaymentStatus(PaymentStatus.CREATED);
+        } else {
+            order.setOrderStatus(OrderStatus.PAYMENT_PENDING);
+            order.setPaymentStatus(PaymentStatus.CREATED);
+        }
 
         Order savedOrder = orderRepository.save(order);
 
@@ -135,15 +149,56 @@ public class CheckoutService {
             itemDtos.add(OrderItemDto.fromEntity(savedItem));
         }
 
-        // Add history record
-        OrderStatusHistory history = new OrderStatusHistory(
-                savedOrder.getId(),
-                null,
-                OrderStatus.PAYMENT_PENDING,
-                userId,
-                "Order created, pending payment confirmation"
-        );
-        orderStatusHistoryRepository.save(history);
+        if (paymentMethod == PaymentMethod.COD) {
+            // Pessimistic lock and atomic stock deduction for COD orders upon placement
+            for (CartItem ci : ctx.items) {
+                Inventory inventory = inventoryRepository.findWithLockByProductId(ci.getProductId())
+                        .orElseThrow(() -> new ApiException("INVENTORY_NOT_FOUND", "Inventory not found for product: " + ci.getProductId(), HttpStatus.NOT_FOUND));
+
+                if (inventory.getAvailableQuantity() < ci.getQuantity()) {
+                    Product prod = ctx.productMap.get(ci.getProductId());
+                    throw new ApiException("INSUFFICIENT_STOCK", "Insufficient stock for product: " + (prod != null ? prod.getName() : ci.getProductId()), HttpStatus.CONFLICT);
+                }
+            }
+
+            for (CartItem ci : ctx.items) {
+                Inventory inventory = inventoryRepository.findWithLockByProductId(ci.getProductId()).get();
+                int previousQty = inventory.getAvailableQuantity();
+                int newQty = previousQty - ci.getQuantity();
+                inventory.setAvailableQuantity(newQty);
+                inventoryRepository.save(inventory);
+
+                InventoryMovement movement = new InventoryMovement(
+                        ci.getProductId(),
+                        -ci.getQuantity(),
+                        newQty,
+                        "ORDER",
+                        "ORDER",
+                        String.valueOf(savedOrder.getId()),
+                        userId
+                );
+                inventoryMovementRepository.save(movement);
+            }
+
+            OrderStatusHistory history = new OrderStatusHistory(
+                    savedOrder.getId(),
+                    null,
+                    OrderStatus.VENDOR_PENDING,
+                    userId,
+                    "Order placed via Cash on Delivery. Order routed to vendor for fulfillment."
+            );
+            orderStatusHistoryRepository.save(history);
+        } else {
+            // Add history record for online payment
+            OrderStatusHistory history = new OrderStatusHistory(
+                    savedOrder.getId(),
+                    null,
+                    OrderStatus.PAYMENT_PENDING,
+                    userId,
+                    "Order created, pending payment confirmation"
+            );
+            orderStatusHistoryRepository.save(history);
+        }
 
         // Clear user's cart
         cartItemRepository.deleteByCartId(ctx.cart.getId());

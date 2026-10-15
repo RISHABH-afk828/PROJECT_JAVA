@@ -3,6 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import AppNavbar from './AppNavbar';
 import LocationModal from '../components/common/LocationModal';
 import { useAuth } from '../store/AuthContext';
+import apiClient from '../services/api/apiClient';
 
 export default function AppShell() {
   const { user } = useAuth();
@@ -21,25 +22,36 @@ export default function AppShell() {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [cartCount, setCartCount] = useState(0);
 
-  // Sync cart count from localStorage
+  // Sync cart count
   React.useEffect(() => {
-    const updateCartCount = () => {
+    let isMounted = true;
+    const updateCartCount = async () => {
+      if (user) {
+        try {
+          const serverCart = await apiClient.get('/cart');
+          if (isMounted) setCartCount(serverCart?.totalItems || 0);
+          return;
+        } catch {
+          // fallback to localStorage
+        }
+      }
       try {
         const cart = JSON.parse(localStorage.getItem('cart') || '{"items":[]}');
         const count = cart.items?.reduce((acc, item) => acc + item.quantity, 0) || 0;
-        setCartCount(count);
+        if (isMounted) setCartCount(count);
       } catch {
-        setCartCount(0);
+        if (isMounted) setCartCount(0);
       }
     };
     updateCartCount();
     window.addEventListener('storage', updateCartCount);
     window.addEventListener('cart-updated', updateCartCount);
     return () => {
+      isMounted = false;
       window.removeEventListener('storage', updateCartCount);
       window.removeEventListener('cart-updated', updateCartCount);
     };
-  }, []);
+  }, [user]);
 
   const isActive = (path) => location.pathname === path;
 

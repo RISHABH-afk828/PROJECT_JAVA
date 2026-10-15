@@ -92,6 +92,7 @@ D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\payment\dto\Payment
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\payment\dto\PaymentOrderResponse.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\payment\dto\PaymentVerifyRequest.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\payment\entity\Payment.java
+D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\payment\entity\PaymentMethod.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\payment\entity\PaymentStatus.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\payment\repository\PaymentRepository.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\payment\service\PaymentService.java
@@ -113,6 +114,7 @@ D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\user\service\UserSe
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\vendor\controller\VendorController.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\vendor\controller\VendorOrderController.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\vendor\dto\StoreStatusUpdateRequest.java
+D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\vendor\dto\VendorDashboardSummaryDto.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\vendor\dto\VendorDto.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\vendor\dto\VendorRegistrationRequest.java
 D:\PROJECT_JAVA\backend\src\main\java\com\example\hyperlocal\vendor\entity\StoreHours.java

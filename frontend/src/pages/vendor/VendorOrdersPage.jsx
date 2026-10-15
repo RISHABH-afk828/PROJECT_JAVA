@@ -166,7 +166,18 @@ export default function VendorOrdersPage() {
               >
                 <div className="d-flex flex-wrap align-items-center justify-content-between border-bottom pb-3 mb-3 gap-2">
                   <div>
-                    <span className="text-muted small d-block">Order #{order.orderNumber}</span>
+                    <div className="d-flex align-items-center gap-2 mb-1">
+                      <span className="fw-semibold text-dark">Order #{order.orderNumber}</span>
+                      {order.paymentMethod === 'COD' ? (
+                        <span className="badge bg-secondary bg-opacity-10 text-secondary border border-secondary small">
+                          <i className="bi bi-cash me-1" />COD
+                        </span>
+                      ) : (
+                        <span className="badge bg-info bg-opacity-10 text-info-emphasis border border-info small">
+                          <i className="bi bi-credit-card me-1" />Online
+                        </span>
+                      )}
+                    </div>
                     <span className="text-muted small">
                       Received at {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
@@ -208,7 +219,15 @@ export default function VendorOrdersPage() {
 
                 {/* Fulfillment Actions */}
                 <div className="d-flex flex-wrap align-items-center justify-content-end gap-2 pt-3 border-top">
-                  {order.orderStatus === 'VENDOR_PENDING' && (
+                  {order.paymentMethod !== 'COD' && (order.orderStatus === 'PAYMENT_PENDING' || order.paymentStatus !== 'CAPTURED') && (
+                    <div className="badge bg-warning bg-opacity-10 text-dark border border-warning px-3 py-2">
+                      <i className="bi bi-clock-history text-warning me-1" />
+                      Awaiting Customer Payment &mdash; Acceptance disabled until payment is captured
+                    </div>
+                  )}
+
+                  {(order.orderStatus === 'VENDOR_PENDING' || order.orderStatus === 'PAID') &&
+                   (order.paymentMethod === 'COD' || order.paymentStatus === 'CAPTURED') && (
                     <>
                       <button
                         className="btn btn-outline-danger btn-sm px-3"

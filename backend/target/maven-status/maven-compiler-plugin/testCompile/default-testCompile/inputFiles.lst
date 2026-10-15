@@ -6,4 +6,5 @@ D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\order\CartAndChecko
 D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\payment\PaymentAndInventoryDeductionTest.java
 D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\security\SecurityHardeningTest.java
 D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\vendor\LocationAndVendorDiscoveryTest.java
+D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\vendor\VendorDashboardSummaryTest.java
 D:\PROJECT_JAVA\backend\src\test\java\com\example\hyperlocal\vendor\VendorFulfillmentTest.java

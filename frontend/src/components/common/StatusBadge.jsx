@@ -14,6 +14,8 @@ const STATUS_CONFIG = {
   PENDING: { bg: '#fef3c7', color: '#b45309', label: 'Pending' },
   PENDING_APPROVAL: { bg: '#fef3c7', color: '#b45309', label: 'Pending Approval' },
   VENDOR_PENDING: { bg: '#fef3c7', color: '#b45309', label: 'Awaiting Vendor' },
+  PAYMENT_PENDING: { bg: '#fff7ed', color: '#c2410c', label: 'Payment Pending' },
+  PAYMENT_FAILED: { bg: '#fee2e2', color: '#b91c1c', label: 'Payment Failed' },
   OFFLINE: { bg: '#f3f4f6', color: '#4b5563', label: 'Offline' },
   CLOSED: { bg: '#fee2e2', color: '#b91c1c', label: 'Closed' },
   REJECTED: { bg: '#fee2e2', color: '#b91c1c', label: 'Rejected' },

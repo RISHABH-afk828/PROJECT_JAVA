@@ -5,10 +5,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 @Entity
-@Table(name = "cart_items", indexes = {
-        @Index(name = "idx_cart_item_cart", columnList = "cart_id"),
-        @Index(name = "idx_cart_item_product", columnList = "product_id")
-})
+@Table(name = "cart_items",
+        uniqueConstraints = @UniqueConstraint(name = "uk_cart_item_cart_product", columnNames = {"cart_id", "product_id"}),
+        indexes = {
+                @Index(name = "idx_cart_item_cart", columnList = "cart_id"),
+                @Index(name = "idx_cart_item_product", columnList = "product_id")
+        })
 public class CartItem {
 
     @Id

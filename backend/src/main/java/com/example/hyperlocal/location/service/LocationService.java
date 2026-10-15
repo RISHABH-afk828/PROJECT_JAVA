@@ -77,7 +77,9 @@ public class LocationService {
                     List<Map<String, Object>> list = new ArrayList<>();
                     for (JsonNode r : results) {
                         Map<String, Object> item = new LinkedHashMap<>();
-                        item.put("label", r.path("formatted").asText(""));
+                        String formatted = r.path("formatted").asText("");
+                        item.put("label", formatted);
+                        item.put("formattedAddress", formatted);
                         item.put("lat", r.path("lat").asDouble());
                         item.put("lng", r.path("lon").asDouble());
 
@@ -93,6 +95,10 @@ public class LocationService {
                         }
                         item.put("locality", locality);
                         item.put("city", r.path("city").asText(""));
+                        item.put("state", r.path("state").asText(""));
+                        item.put("postalCode", r.path("postcode").asText(""));
+                        item.put("street", r.path("street").asText(""));
+                        item.put("house", r.path("housenumber").asText(""));
                         list.add(item);
                     }
                     return list;
@@ -137,9 +143,15 @@ public class LocationService {
                 if (results.isArray() && !results.isEmpty()) {
                     JsonNode r = results.get(0);
                     Map<String, Object> map = new LinkedHashMap<>();
-                    map.put("latitude", r.path("lat").asDouble(lat));
-                    map.put("longitude", r.path("lon").asDouble(lng));
-                    map.put("formattedAddress", r.path("formatted").asText(""));
+                    double resolvedLat = r.path("lat").asDouble(lat);
+                    double resolvedLng = r.path("lon").asDouble(lng);
+                    map.put("latitude", resolvedLat);
+                    map.put("longitude", resolvedLng);
+                    map.put("lat", resolvedLat);
+                    map.put("lng", resolvedLng);
+                    String formatted = r.path("formatted").asText("");
+                    map.put("formattedAddress", formatted);
+                    map.put("label", formatted);
 
                     String locality = "";
                     if (r.hasNonNull("suburb")) {
@@ -155,6 +167,8 @@ public class LocationService {
                     map.put("city", r.path("city").asText(""));
                     map.put("state", r.path("state").asText(""));
                     map.put("postalCode", r.path("postcode").asText(""));
+                    map.put("street", r.path("street").asText(""));
+                    map.put("house", r.path("housenumber").asText(""));
                     return map;
                 }
             }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useOutletContext } from 'react-router-dom';
 import apiClient from '../../services/api/apiClient';
 import { useAuth } from '../../store/AuthContext';
@@ -14,6 +14,7 @@ export default function CartPage() {
   const [loading, setLoading] = useState(true);
   const [updatingItemId, setUpdatingItemId] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+  const migrationInProgress = useRef(false);
 
   useEffect(() => {
     fetchCart();
@@ -24,27 +25,38 @@ export default function CartPage() {
     setErrorMsg(null);
     try {
       if (isAuthenticated) {
-        // Sync local cart items if any were stored offline
+        // Sync local cart items if any were stored offline (Strictly guarded against React StrictMode concurrent runs)
         const localCartRaw = localStorage.getItem('cart');
-        if (localCartRaw) {
+        if (localCartRaw && !migrationInProgress.current) {
+          migrationInProgress.current = true;
           try {
             const localCart = JSON.parse(localCartRaw);
             if (localCart?.items?.length > 0 && localCart.vendorId) {
+              const currentServerCart = await apiClient.get('/cart');
+              const existingProductIds = new Set(
+                (currentServerCart?.items || []).map((i) => i.productId)
+              );
+
               for (const item of localCart.items) {
-                try {
-                  await apiClient.post('/cart/items', {
-                    vendorId: localCart.vendorId,
-                    productId: item.productId,
-                    quantity: item.quantity,
-                  });
-                } catch {
-                  // ignore conflicts during bulk sync
+                if (!existingProductIds.has(item.productId)) {
+                  try {
+                    await apiClient.post('/cart/items', {
+                      vendorId: localCart.vendorId,
+                      productId: item.productId,
+                      quantity: item.quantity,
+                    });
+                    existingProductIds.add(item.productId);
+                  } catch {
+                    // ignore conflicts during bulk sync
+                  }
                 }
               }
-              localStorage.removeItem('cart');
             }
           } catch {
             // ignore JSON parse error
+          } finally {
+            localStorage.removeItem('cart');
+            migrationInProgress.current = false;
           }
         }
 
@@ -75,13 +87,20 @@ export default function CartPage() {
   };
 
   const handleUpdateQuantity = async (itemId, newQuantity) => {
+    if (updatingItemId) return;
     setUpdatingItemId(itemId);
     setErrorMsg(null);
     try {
       if (isAuthenticated) {
-        const updated = await apiClient.patch(`/cart/items/${itemId}`, { quantity: newQuantity });
+        let updated;
+        if (newQuantity <= 0) {
+          updated = await apiClient.delete(`/cart/items/${itemId}`);
+        } else {
+          updated = await apiClient.patch(`/cart/items/${itemId}`, { quantity: newQuantity });
+        }
         setCart(updated);
         if (setCartCount) setCartCount(updated.totalItems || 0);
+        window.dispatchEvent(new Event('cart-updated'));
       } else {
         // Update local cart
         const updatedItems = (cart.items || [])
@@ -99,6 +118,7 @@ export default function CartPage() {
         };
         setCart(newCart);
         localStorage.setItem('cart', JSON.stringify(newCart));
+        window.dispatchEvent(new Event('cart-updated'));
         if (setCartCount) setCartCount(newCart.totalItems);
       }
     } catch (err) {
@@ -109,6 +129,7 @@ export default function CartPage() {
   };
 
   const handleRemoveItem = async (itemId) => {
+    if (updatingItemId) return;
     setUpdatingItemId(itemId);
     setErrorMsg(null);
     try {
@@ -116,6 +137,7 @@ export default function CartPage() {
         const updated = await apiClient.delete(`/cart/items/${itemId}`);
         setCart(updated);
         if (setCartCount) setCartCount(updated.totalItems || 0);
+        window.dispatchEvent(new Event('cart-updated'));
       } else {
         const updatedItems = (cart.items || []).filter((i) => i.id !== itemId && i.productId !== itemId);
         const subtotal = updatedItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
@@ -129,6 +151,7 @@ export default function CartPage() {
         };
         setCart(newCart);
         localStorage.setItem('cart', JSON.stringify(newCart));
+        window.dispatchEvent(new Event('cart-updated'));
         if (setCartCount) setCartCount(newCart.totalItems);
       }
     } catch (err) {
@@ -145,10 +168,12 @@ export default function CartPage() {
         const updated = await apiClient.delete('/cart');
         setCart(updated);
         if (setCartCount) setCartCount(0);
+        window.dispatchEvent(new Event('cart-updated'));
       } else {
         const emptyCart = { vendorId: null, vendorName: null, items: [], subtotal: 0, totalItems: 0 };
         setCart(emptyCart);
         localStorage.removeItem('cart');
+        window.dispatchEvent(new Event('cart-updated'));
         if (setCartCount) setCartCount(0);
       }
     } catch (err) {

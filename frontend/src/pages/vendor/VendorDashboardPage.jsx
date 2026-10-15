@@ -7,7 +7,10 @@ import EmptyState from '../../components/common/EmptyState';
 
 export default function VendorDashboardPage() {
   const [store, setStore] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [summaryError, setSummaryError] = useState(null);
   const [lowStock, setLowStock] = useState([]);
+  const [stockError, setStockError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [togglingStatus, setTogglingStatus] = useState(false);
 
@@ -29,6 +32,29 @@ export default function VendorDashboardPage() {
     fetchDashboardData();
   }, []);
 
+  const fetchLowStock = async () => {
+    setStockError(null);
+    try {
+      const stockData = await apiClient.get('/vendors/me/inventory/low-stock');
+      setLowStock(stockData || []);
+    } catch (stockErr) {
+      console.warn('Could not load low-stock items:', stockErr);
+      setStockError(stockErr.message || 'Unable to load low-stock alerts.');
+      setLowStock([]);
+    }
+  };
+
+  const fetchSummary = async () => {
+    setSummaryError(null);
+    try {
+      const summaryData = await apiClient.get('/vendor/dashboard/summary');
+      setSummary(summaryData);
+    } catch (err) {
+      console.warn('Could not load vendor summary:', err);
+      setSummaryError(err.message || 'Unable to load dashboard summary.');
+    }
+  };
+
   const fetchDashboardData = async () => {
     setLoading(true);
     setLoadError(null);
@@ -36,12 +62,8 @@ export default function VendorDashboardPage() {
       const storeData = await apiClient.get('/vendor/store');
       setStore(storeData);
 
-      try {
-        const stockData = await apiClient.get('/vendors/me/inventory/low-stock');
-        setLowStock(stockData || []);
-      } catch (stockErr) {
-        console.warn('Could not load low-stock items:', stockErr);
-        setLowStock([]);
+      if (storeData) {
+        await Promise.allSettled([fetchSummary(), fetchLowStock()]);
       }
     } catch (err) {
       if (err.code === 'STORE_NOT_FOUND' || err.status === 404) {
@@ -377,35 +399,92 @@ export default function VendorDashboardPage() {
         </div>
       </div>
 
+      {summaryError && (
+        <div className="alert alert-warning py-2 px-3 small d-flex align-items-center justify-content-between mb-3">
+          <div className="d-flex align-items-center gap-2">
+            <i className="bi bi-exclamation-triangle-fill text-warning flex-shrink-0" />
+            <span>{summaryError}</span>
+          </div>
+          <button className="btn btn-outline-dark btn-sm py-0 px-2" onClick={fetchSummary}>
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Metrics Row */}
       <div className="row g-3 mb-4">
         <div className="col-6 col-md-3">
           <div className="card p-3 border shadow-sm">
             <span className="text-muted small fw-medium">Today's Orders</span>
-            <h3 className="fw-bolder text-dark mb-0 mt-1">12</h3>
-            <span className="text-success small mt-1 d-block"><i className="bi bi-arrow-up" /> +20% vs yesterday</span>
+            <h3 className="fw-bolder text-dark mb-0 mt-1">
+              {summary?.todayOrders ?? 0}
+            </h3>
+            {summary?.orderGrowthPercent !== null && summary?.orderGrowthPercent !== undefined ? (
+              summary.orderGrowthPercent > 0 ? (
+                <span className="text-success small mt-1 d-block">
+                  <i className="bi bi-arrow-up" /> {summary.orderGrowthLabel}
+                </span>
+              ) : summary.orderGrowthPercent < 0 ? (
+                <span className="text-danger small mt-1 d-block">
+                  <i className="bi bi-arrow-down" /> {summary.orderGrowthLabel}
+                </span>
+              ) : (
+                <span className="text-muted small mt-1 d-block">
+                  {summary.orderGrowthLabel}
+                </span>
+              )
+            ) : (
+              <span className="text-muted small mt-1 d-block">
+                {summary?.orderGrowthLabel || 'No orders yesterday'}
+              </span>
+            )}
           </div>
         </div>
         <div className="col-6 col-md-3">
           <div className="card p-3 border shadow-sm">
             <span className="text-muted small fw-medium">Pending Orders</span>
-            <h3 className="fw-bolder text-warning mb-0 mt-1">2</h3>
+            <h3 className={`fw-bolder mb-0 mt-1 ${(summary?.pendingOrders || 0) > 0 ? 'text-warning' : 'text-dark'}`}>
+              {summary?.pendingOrders ?? 0}
+            </h3>
             <Link to="/vendor/orders" className="small text-decoration-none mt-1 d-block">View order queue &rarr;</Link>
+            {(summary?.awaitingPaymentOrders || 0) > 0 && (
+              <span className="text-muted small mt-1 d-block" style={{ fontSize: '0.75rem' }} title="Orders awaiting customer payment completion">
+                <i className="bi bi-clock-history text-warning me-1" />
+                {summary.awaitingPaymentOrders} awaiting payment
+              </span>
+            )}
           </div>
         </div>
         <div className="col-6 col-md-3">
           <div className="card p-3 border shadow-sm">
             <span className="text-muted small fw-medium">Sales Total Today</span>
-            <h3 className="fw-bolder text-dark mb-0 mt-1">₹4,850</h3>
-            <span className="text-muted small mt-1 d-block">10 completed orders</span>
+            <h3 className="fw-bolder text-dark mb-0 mt-1">
+              ₹{Number(summary?.todaySales ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+            </h3>
+            <span className="text-muted small mt-1 d-block">
+              {summary?.completedOrdersToday ?? 0} completed orders
+            </span>
           </div>
         </div>
         <div className="col-6 col-md-3">
           <div className="card p-3 border shadow-sm">
             <span className="text-muted small fw-medium">Low Stock Alerts</span>
-            <h3 className={`fw-bolder mb-0 mt-1 ${lowStock.length > 0 ? 'text-danger' : 'text-success'}`}>
-              {lowStock.length}
-            </h3>
+            {stockError ? (
+              <div className="d-flex align-items-center gap-1 mt-1">
+                <span className="text-danger small">Failed to load</span>
+                <button
+                  className="btn btn-link btn-sm p-0 text-decoration-none text-danger"
+                  onClick={fetchLowStock}
+                  title="Retry"
+                >
+                  <i className="bi bi-arrow-clockwise" />
+                </button>
+              </div>
+            ) : (
+              <h3 className={`fw-bolder mb-0 mt-1 ${lowStock.length > 0 ? 'text-danger' : 'text-success'}`}>
+                {lowStock.length}
+              </h3>
+            )}
             <Link to="/vendor/inventory" className="small text-decoration-none mt-1 d-block">Manage stock &rarr;</Link>
           </div>
         </div>
@@ -425,7 +504,17 @@ export default function VendorDashboardPage() {
               </Link>
             </div>
 
-            {lowStock.length === 0 ? (
+            {stockError ? (
+              <div className="alert alert-warning py-2 px-3 small d-flex align-items-center justify-content-between mb-0">
+                <div className="d-flex align-items-center gap-2">
+                  <i className="bi bi-exclamation-triangle-fill text-warning flex-shrink-0" />
+                  <span>{stockError}</span>
+                </div>
+                <button className="btn btn-outline-dark btn-sm py-0 px-2" onClick={fetchLowStock}>
+                  Retry
+                </button>
+              </div>
+            ) : lowStock.length === 0 ? (
               <div className="text-muted small py-3 text-center">
                 All catalog products have sufficient stock levels!
               </div>

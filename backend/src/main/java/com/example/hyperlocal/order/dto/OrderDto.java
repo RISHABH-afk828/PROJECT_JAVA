@@ -2,6 +2,7 @@ package com.example.hyperlocal.order.dto;
 
 import com.example.hyperlocal.order.entity.Order;
 import com.example.hyperlocal.order.entity.OrderStatus;
+import com.example.hyperlocal.payment.entity.PaymentMethod;
 import com.example.hyperlocal.payment.entity.PaymentStatus;
 
 import java.math.BigDecimal;
@@ -25,6 +26,7 @@ public class OrderDto {
     private String currency;
     private OrderStatus orderStatus;
     private PaymentStatus paymentStatus;
+    private PaymentMethod paymentMethod;
     private List<OrderItemDto> items = new ArrayList<>();
     private Instant createdAt;
     private Instant acceptedAt;
@@ -48,6 +50,7 @@ public class OrderDto {
         dto.setCurrency(order.getCurrency());
         dto.setOrderStatus(order.getOrderStatus());
         dto.setPaymentStatus(order.getPaymentStatus());
+        dto.setPaymentMethod(order.getPaymentMethod());
         dto.setItems(items != null ? items : new ArrayList<>());
         dto.setCreatedAt(order.getCreatedAt());
         dto.setAcceptedAt(order.getAcceptedAt());
@@ -214,5 +217,13 @@ public class OrderDto {
 
     public void setDeliveredAt(Instant deliveredAt) {
         this.deliveredAt = deliveredAt;
+    }
+
+    public PaymentMethod getPaymentMethod() {
+        return paymentMethod;
+    }
+
+    public void setPaymentMethod(PaymentMethod paymentMethod) {
+        this.paymentMethod = paymentMethod;
     }
 }

@@ -2,7 +2,11 @@ package com.example.hyperlocal.vendor.service;
 
 import com.example.hyperlocal.common.exception.ApiException;
 import com.example.hyperlocal.common.util.HaversineUtil;
+import com.example.hyperlocal.order.entity.OrderStatus;
+import com.example.hyperlocal.order.repository.OrderRepository;
+import com.example.hyperlocal.payment.entity.PaymentStatus;
 import com.example.hyperlocal.vendor.dto.StoreStatusUpdateRequest;
+import com.example.hyperlocal.vendor.dto.VendorDashboardSummaryDto;
 import com.example.hyperlocal.vendor.dto.VendorDto;
 import com.example.hyperlocal.vendor.dto.VendorRegistrationRequest;
 import com.example.hyperlocal.vendor.entity.StoreHours;
@@ -15,9 +19,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.DayOfWeek;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -26,10 +33,12 @@ public class VendorService {
 
     private final VendorRepository vendorRepository;
     private final StoreHoursRepository storeHoursRepository;
+    private final OrderRepository orderRepository;
 
-    public VendorService(VendorRepository vendorRepository, StoreHoursRepository storeHoursRepository) {
+    public VendorService(VendorRepository vendorRepository, StoreHoursRepository storeHoursRepository, OrderRepository orderRepository) {
         this.vendorRepository = vendorRepository;
         this.storeHoursRepository = storeHoursRepository;
+        this.orderRepository = orderRepository;
     }
 
     @Transactional(readOnly = true)
@@ -173,5 +182,74 @@ public class VendorService {
         return storeHoursRepository.findByVendorIdAndDayOfWeek(vendor.getId(), today)
                 .map(hours -> hours.isOpenNow(now))
                 .orElse(true); // Default open if no specific hours configured
+    }
+
+    @Transactional(readOnly = true)
+    public VendorDashboardSummaryDto getDashboardSummary(Long ownerUserId) {
+        Vendor vendor = vendorRepository.findByOwnerUserId(ownerUserId)
+                .orElseThrow(() -> new ApiException("STORE_NOT_FOUND", "No store registered for this user", HttpStatus.NOT_FOUND));
+        Long vendorId = vendor.getId();
+
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        LocalDate today = LocalDate.now(zone);
+        Instant todayStart = today.atStartOfDay(zone).toInstant();
+        Instant todayEnd = today.plusDays(1).atStartOfDay(zone).toInstant();
+        Instant yesterdayStart = today.minusDays(1).atStartOfDay(zone).toInstant();
+        Instant yesterdayEnd = todayStart;
+
+        long todayOrders = orderRepository.countByVendorIdAndCreatedAtBetween(vendorId, todayStart, todayEnd);
+        long yesterdayOrders = orderRepository.countByVendorIdAndCreatedAtBetween(vendorId, yesterdayStart, yesterdayEnd);
+
+        List<OrderStatus> pendingStatuses = List.of(
+                OrderStatus.VENDOR_PENDING,
+                OrderStatus.ACCEPTED,
+                OrderStatus.PREPARING,
+                OrderStatus.PAID
+        );
+        long pendingOrders = orderRepository.countPendingFulfillmentOrdersForVendor(vendorId, pendingStatuses);
+
+        List<OrderStatus> excludedStatuses = List.of(
+                OrderStatus.CANCELLED,
+                OrderStatus.REJECTED,
+                OrderStatus.PAYMENT_FAILED,
+                OrderStatus.REFUNDED
+        );
+        long awaitingPaymentOrders = orderRepository.countAwaitingPaymentForVendor(vendorId, excludedStatuses);
+        BigDecimal todaySales = orderRepository.sumTotalByVendorIdAndCreatedAtBetweenAndPaymentStatusAndOrderStatusNotIn(
+                vendorId, todayStart, todayEnd, PaymentStatus.CAPTURED, excludedStatuses);
+        if (todaySales == null) {
+            todaySales = BigDecimal.ZERO;
+        }
+
+        long completedOrdersToday = orderRepository.countCompletedOrdersForVendorToday(
+                vendorId, OrderStatus.DELIVERED, todayStart, todayEnd);
+
+        Double orderGrowthPercent = null;
+        String orderGrowthLabel;
+        if (yesterdayOrders == 0) {
+            orderGrowthLabel = "No orders yesterday";
+        } else {
+            double percent = ((double) (todayOrders - yesterdayOrders) / (double) yesterdayOrders) * 100.0;
+            double rounded = Math.round(percent * 10.0) / 10.0;
+            orderGrowthPercent = rounded;
+            if (rounded > 0) {
+                orderGrowthLabel = "+" + (rounded == (long) rounded ? String.format(Locale.ROOT, "%d", (long) rounded) : String.format(Locale.ROOT, "%.1f", rounded)) + "% vs yesterday";
+            } else if (rounded < 0) {
+                orderGrowthLabel = (rounded == (long) rounded ? String.format(Locale.ROOT, "%d", (long) rounded) : String.format(Locale.ROOT, "%.1f", rounded)) + "% vs yesterday";
+            } else {
+                orderGrowthLabel = "0% vs yesterday";
+            }
+        }
+
+        return new VendorDashboardSummaryDto(
+                todayOrders,
+                yesterdayOrders,
+                pendingOrders,
+                awaitingPaymentOrders,
+                todaySales,
+                completedOrdersToday,
+                orderGrowthPercent,
+                orderGrowthLabel
+        );
     }
 }

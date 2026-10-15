@@ -14,6 +14,7 @@ import com.example.hyperlocal.order.repository.OrderItemRepository;
 import com.example.hyperlocal.order.repository.OrderRepository;
 import com.example.hyperlocal.order.repository.OrderStatusHistoryRepository;
 import com.example.hyperlocal.order.service.OrderService;
+import com.example.hyperlocal.payment.entity.PaymentMethod;
 import com.example.hyperlocal.payment.entity.PaymentStatus;
 import com.example.hyperlocal.vendor.entity.Vendor;
 import com.example.hyperlocal.vendor.repository.VendorRepository;
@@ -65,7 +66,10 @@ public class VendorOrderService {
         Vendor vendor = getVendorForOwner(ownerUserId);
 
         Page<Order> orders;
-        if (status != null) {
+        if (status == OrderStatus.VENDOR_PENDING) {
+            orders = orderRepository.findIncomingOrdersForVendor(
+                    vendor.getId(), List.of(OrderStatus.VENDOR_PENDING, OrderStatus.PAID), PageRequest.of(page, size));
+        } else if (status != null) {
             orders = orderRepository.findByVendorIdAndOrderStatusOrderByCreatedAtDesc(
                     vendor.getId(), status, PageRequest.of(page, size));
         } else {
@@ -104,6 +108,11 @@ public class VendorOrderService {
         if (order.getOrderStatus() != OrderStatus.VENDOR_PENDING && order.getOrderStatus() != OrderStatus.PAID) {
             throw new ApiException("INVALID_ORDER_STATE",
                     "Cannot accept order in status: " + order.getOrderStatus(), HttpStatus.BAD_REQUEST);
+        }
+
+        if (order.getPaymentMethod() != PaymentMethod.COD && order.getPaymentStatus() != PaymentStatus.CAPTURED) {
+            throw new ApiException("PAYMENT_NOT_CAPTURED",
+                    "Cannot accept order until customer payment has been captured", HttpStatus.BAD_REQUEST);
         }
 
         OrderStatus fromStatus = order.getOrderStatus();
@@ -214,7 +223,7 @@ public class VendorOrderService {
         statusHistoryRepository.save(history);
 
         // RESTORE INVENTORY ONLY IF DEDUCTED AND NOT ALREADY RESTORED
-        boolean wasInventoryDeducted = order.getPaymentStatus() == PaymentStatus.CAPTURED;
+        boolean wasInventoryDeducted = movementRepository.existsByReferenceIdAndReason(String.valueOf(order.getId()), "ORDER") || order.getPaymentStatus() == PaymentStatus.CAPTURED;
         boolean alreadyRestored = movementRepository.existsByReferenceIdAndReason(String.valueOf(order.getId()), "ORDER_REJECTED");
         if (wasInventoryDeducted && !alreadyRestored) {
             List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());

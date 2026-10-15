@@ -13,6 +13,8 @@ import com.example.hyperlocal.order.entity.OrderStatusHistory;
 import com.example.hyperlocal.order.repository.OrderRepository;
 import com.example.hyperlocal.order.repository.OrderStatusHistoryRepository;
 import com.example.hyperlocal.order.service.OrderService;
+import com.example.hyperlocal.payment.entity.PaymentMethod;
+import com.example.hyperlocal.payment.entity.PaymentStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -208,14 +210,20 @@ public class DeliveryService {
 
         order.setOrderStatus(OrderStatus.DELIVERED);
         order.setDeliveredAt(Instant.now());
+        if (order.getPaymentMethod() == PaymentMethod.COD && order.getPaymentStatus() != PaymentStatus.CAPTURED) {
+            order.setPaymentStatus(PaymentStatus.CAPTURED);
+        }
         Order updated = orderRepository.save(order);
 
+        String note = (order.getPaymentMethod() == PaymentMethod.COD)
+                ? "Package delivered to customer successfully. Cash on Delivery payment collected."
+                : "Package delivered to customer successfully.";
         OrderStatusHistory history = new OrderStatusHistory(
                 order.getId(),
                 OrderStatus.OUT_FOR_DELIVERY,
                 OrderStatus.DELIVERED,
                 userId,
-                "Package delivered to customer successfully."
+                note
         );
         statusHistoryRepository.save(history);
 

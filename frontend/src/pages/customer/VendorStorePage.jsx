@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
 import apiClient from '../../services/api/apiClient';
+import { useAuth } from '../../store/AuthContext';
 import Skeleton from '../../components/common/Skeleton';
 import EmptyState from '../../components/common/EmptyState';
 import StatusBadge from '../../components/common/StatusBadge';
@@ -8,6 +9,7 @@ import StatusBadge from '../../components/common/StatusBadge';
 export default function VendorStorePage() {
   const { vendorId } = useParams();
   const { selectedLocation, setCartCount } = useOutletContext() || {};
+  const { isAuthenticated } = useAuth();
 
   const [vendor, setVendor] = useState(null);
   const [products, setProducts] = useState([]);
@@ -16,6 +18,7 @@ export default function VendorStorePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [updatingProductId, setUpdatingProductId] = useState(null);
 
   // Cart state
   const [cart, setCart] = useState(() => {
@@ -27,6 +30,20 @@ export default function VendorStorePage() {
   });
 
   const [conflictModal, setConflictModal] = useState(null);
+
+  // Sync server cart when authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      apiClient.get('/cart')
+        .then((serverCart) => {
+          if (serverCart) {
+            setCart(serverCart);
+            if (setCartCount) setCartCount(serverCart.totalItems || 0);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
     fetchVendor();
@@ -74,23 +91,64 @@ export default function VendorStorePage() {
 
   // Cart operations (Single-vendor cart enforcement per PRD §3.5)
   const getItemQuantityInCart = (productId) => {
-    const item = cart.items?.find((i) => i.productId === productId);
+    const item = cart?.items?.find((i) => i.productId === productId);
     return item ? item.quantity : 0;
   };
 
-  const handleAddToCart = (product, quantity = 1) => {
+  const handleAddToCart = async (product, delta = 1) => {
+    if (updatingProductId === product.id) return;
     const currentVendorId = Number(vendorId);
 
-    // Check if cart belongs to another vendor
-    if (cart.vendorId && cart.vendorId !== currentVendorId && cart.items?.length > 0) {
-      setConflictModal({
-        newProduct: product,
-        newQuantity: quantity,
-      });
-      return;
-    }
+    if (isAuthenticated) {
+      setUpdatingProductId(product.id);
+      try {
+        const existingItem = cart?.items?.find((i) => i.productId === product.id);
+        let updatedCart;
+        if (existingItem) {
+          const newQty = existingItem.quantity + delta;
+          if (newQty <= 0) {
+            updatedCart = await apiClient.delete(`/cart/items/${existingItem.id}`);
+          } else {
+            updatedCart = await apiClient.patch(`/cart/items/${existingItem.id}`, { quantity: newQty });
+          }
+        } else if (delta > 0) {
+          updatedCart = await apiClient.post('/cart/items', {
+            vendorId: currentVendorId,
+            productId: product.id,
+            quantity: delta,
+            replaceCart: false,
+          });
+        }
+        if (updatedCart) {
+          setCart(updatedCart);
+          if (setCartCount) setCartCount(updatedCart.totalItems || 0);
+          localStorage.removeItem('cart');
+          window.dispatchEvent(new Event('cart-updated'));
+        }
+      } catch (err) {
+        if (err.code === 'CART_VENDOR_CONFLICT' || err.status === 409) {
+          setConflictModal({
+            newProduct: product,
+            newQuantity: delta,
+          });
+        } else {
+          console.error('Failed to update cart:', err);
+        }
+      } finally {
+        setUpdatingProductId(null);
+      }
+    } else {
+      // Guest / unauthenticated fallback
+      if (cart.vendorId && cart.vendorId !== currentVendorId && cart.items?.length > 0) {
+        setConflictModal({
+          newProduct: product,
+          newQuantity: delta,
+        });
+        return;
+      }
 
-    applyAddToCart(product, quantity, currentVendorId);
+      applyAddToCart(product, delta, currentVendorId);
+    }
   };
 
   const applyAddToCart = (product, quantity, storeId) => {
@@ -135,31 +193,52 @@ export default function VendorStorePage() {
     }
   };
 
-  const handleReplaceCart = () => {
+  const handleReplaceCart = async () => {
     if (!conflictModal) return;
     const { newProduct, newQuantity } = conflictModal;
     const currentVendorId = Number(vendorId);
 
-    const newCart = {
-      vendorId: currentVendorId,
-      vendorName: vendor?.storeName,
-      items: [
-        {
+    if (isAuthenticated) {
+      setUpdatingProductId(newProduct.id);
+      try {
+        const updatedCart = await apiClient.post('/cart/items', {
+          vendorId: currentVendorId,
           productId: newProduct.id,
-          name: newProduct.name,
-          price: newProduct.price,
-          unit: newProduct.unit,
-          imageUrl: newProduct.imageUrl,
           quantity: newQuantity,
-        },
-      ],
-    };
+          replaceCart: true,
+        });
+        setCart(updatedCart);
+        if (setCartCount) setCartCount(updatedCart.totalItems || 0);
+        localStorage.removeItem('cart');
+        window.dispatchEvent(new Event('cart-updated'));
+      } catch (err) {
+        console.error('Failed to replace cart:', err);
+      } finally {
+        setUpdatingProductId(null);
+        setConflictModal(null);
+      }
+    } else {
+      const newCart = {
+        vendorId: currentVendorId,
+        vendorName: vendor?.storeName,
+        items: [
+          {
+            productId: newProduct.id,
+            name: newProduct.name,
+            price: newProduct.price,
+            unit: newProduct.unit,
+            imageUrl: newProduct.imageUrl,
+            quantity: newQuantity,
+          },
+        ],
+      };
 
-    setCart(newCart);
-    localStorage.setItem('cart', JSON.stringify(newCart));
-    window.dispatchEvent(new Event('cart-updated'));
-    if (setCartCount) setCartCount(newQuantity);
-    setConflictModal(null);
+      setCart(newCart);
+      localStorage.setItem('cart', JSON.stringify(newCart));
+      window.dispatchEvent(new Event('cart-updated'));
+      if (setCartCount) setCartCount(newQuantity);
+      setConflictModal(null);
+    }
   };
 
   if (!vendor && !loading) {
@@ -366,17 +445,22 @@ export default function VendorStorePage() {
                           type="button"
                           className="btn btn-light px-2"
                           onClick={() => handleAddToCart(product, -1)}
+                          disabled={updatingProductId === product.id}
                         >
                           <i className="bi bi-dash" />
                         </button>
                         <span className="btn btn-white disabled text-dark fw-bold px-2">
-                          {qty}
+                          {updatingProductId === product.id ? (
+                            <span className="spinner-border spinner-border-sm" style={{ width: '0.75rem', height: '0.75rem' }} />
+                          ) : (
+                            qty
+                          )}
                         </span>
                         <button
                           type="button"
                           className="btn btn-light px-2"
                           onClick={() => handleAddToCart(product, 1)}
-                          disabled={qty >= product.availableQuantity}
+                          disabled={qty >= product.availableQuantity || updatingProductId === product.id}
                         >
                           <i className="bi bi-plus" />
                         </button>
@@ -384,10 +468,18 @@ export default function VendorStorePage() {
                     ) : (
                       <button
                         type="button"
-                        className="btn btn-outline-dark btn-sm rounded-pill px-3"
+                        className="btn btn-outline-dark btn-sm rounded-pill px-3 d-flex align-items-center gap-1"
                         onClick={() => handleAddToCart(product, 1)}
+                        disabled={updatingProductId === product.id}
                       >
-                        + Add
+                        {updatingProductId === product.id ? (
+                          <>
+                            <span className="spinner-border spinner-border-sm" style={{ width: '0.75rem', height: '0.75rem' }} />
+                            <span>Adding...</span>
+                          </>
+                        ) : (
+                          '+ Add'
+                        )}
                       </button>
                     )}
                   </div>
@@ -477,14 +569,21 @@ export default function VendorStorePage() {
                   </span>
 
                   <button
-                    className="btn btn-primary btn-sm px-4"
-                    disabled={selectedProduct.availableQuantity <= 0}
-                    onClick={() => {
-                      handleAddToCart(selectedProduct, 1);
+                    className="btn btn-primary btn-sm px-4 d-flex align-items-center gap-1"
+                    disabled={selectedProduct.availableQuantity <= 0 || updatingProductId === selectedProduct.id}
+                    onClick={async () => {
+                      await handleAddToCart(selectedProduct, 1);
                       setSelectedProduct(null);
                     }}
                   >
-                    Add to Cart
+                    {updatingProductId === selectedProduct.id ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm" />
+                        <span>Adding...</span>
+                      </>
+                    ) : (
+                      'Add to Cart'
+                    )}
                   </button>
                 </div>
               </div>

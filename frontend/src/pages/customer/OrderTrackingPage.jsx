@@ -188,9 +188,20 @@ export default function OrderTrackingPage() {
             <span className="badge bg-light text-muted border mb-1">
               Live Order Tracking
             </span>
-            <h3 className="fw-bolder text-dark mb-1" style={{ letterSpacing: '-0.02em' }}>
-              Order #{order?.orderNumber}
-            </h3>
+            <div className="d-flex align-items-center gap-2 mb-1">
+              <h3 className="fw-bolder text-dark mb-0" style={{ letterSpacing: '-0.02em' }}>
+                Order #{order?.orderNumber}
+              </h3>
+              {order?.paymentMethod === 'COD' ? (
+                <span className="badge bg-secondary bg-opacity-10 text-secondary border border-secondary small">
+                  <i className="bi bi-cash me-1" />Cash on Delivery
+                </span>
+              ) : (
+                <span className="badge bg-info bg-opacity-10 text-info-emphasis border border-info small">
+                  <i className="bi bi-credit-card me-1" />Online (Razorpay)
+                </span>
+              )}
+            </div>
             <p className="text-muted small mb-0">
               Fulfilled by <strong>{order?.vendorName}</strong> &bull; Placed at{' '}
               {order?.createdAt && new Date(order.createdAt).toLocaleString()}
@@ -345,12 +356,32 @@ export default function OrderTrackingPage() {
               </span>
             </div>
 
+            <div className="d-flex justify-content-between align-items-center bg-light p-2 rounded small mb-2">
+              <span className="text-muted">Payment Method:</span>
+              <span className="fw-semibold text-dark">
+                {order?.paymentMethod === 'COD' ? (
+                  <span><i className="bi bi-cash me-1" />Cash on Delivery</span>
+                ) : (
+                  <span><i className="bi bi-credit-card me-1" />Online (Razorpay)</span>
+                )}
+              </span>
+            </div>
+
             <div className="d-flex justify-content-between align-items-center bg-light p-2 rounded small">
               <span className="text-muted">Payment Status:</span>
               <StatusBadge status={order?.paymentStatus || 'CREATED'} />
             </div>
 
-            {order?.paymentStatus !== 'CAPTURED' && !isCancelled && (
+            {order?.paymentMethod === 'COD' ? (
+              <div className="mt-3 pt-3 border-top">
+                <div className="alert alert-secondary py-2 px-3 small mb-0 d-flex align-items-center gap-2">
+                  <i className="bi bi-cash-coin fs-5 text-success flex-shrink-0" />
+                  <div>
+                    <strong>Cash on Delivery:</strong> Pay ₹{Number(order?.total || 0).toFixed(2)} with cash or UPI QR code to the delivery partner upon doorstep delivery.
+                  </div>
+                </div>
+              </div>
+            ) : order?.paymentStatus !== 'CAPTURED' && !isCancelled && (
               <div className="mt-3 pt-3 border-top">
                 {retryError && (
                   <div className="alert alert-danger py-2 px-3 small mb-2">

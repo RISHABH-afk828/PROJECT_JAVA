@@ -3,6 +3,7 @@ package com.example.hyperlocal.vendor.controller;
 import com.example.hyperlocal.common.response.ApiResponse;
 import com.example.hyperlocal.common.security.UserPrincipal;
 import com.example.hyperlocal.vendor.dto.StoreStatusUpdateRequest;
+import com.example.hyperlocal.vendor.dto.VendorDashboardSummaryDto;
 import com.example.hyperlocal.vendor.dto.VendorDto;
 import com.example.hyperlocal.vendor.dto.VendorRegistrationRequest;
 import com.example.hyperlocal.vendor.service.VendorService;
@@ -97,5 +98,13 @@ public class VendorController {
             @RequestBody StoreStatusUpdateRequest req) {
         VendorDto vendor = vendorService.updateStoreStatus(principal.getId(), req);
         return ResponseEntity.ok(ApiResponse.success(vendor));
+    }
+
+    @GetMapping("/vendor/dashboard/summary")
+    @PreAuthorize("hasRole('VENDOR')")
+    public ResponseEntity<ApiResponse<VendorDashboardSummaryDto>> getDashboardSummary(
+            @AuthenticationPrincipal UserPrincipal principal) {
+        VendorDashboardSummaryDto summary = vendorService.getDashboardSummary(principal.getId());
+        return ResponseEntity.ok(ApiResponse.success(summary));
     }
 }

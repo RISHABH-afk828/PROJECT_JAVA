@@ -2,6 +2,20 @@ import React, { useState, useEffect } from 'react';
 import apiClient from '../../services/api/apiClient';
 import LoadingButton from '../../components/common/LoadingButton';
 
+const emptyAddress = {
+  label: 'Home',
+  house: '',
+  street: '',
+  locality: '',
+  city: '',
+  state: '',
+  postalCode: '',
+  latitude: null,
+  longitude: null,
+  deliveryInstructions: '',
+  isDefault: false,
+};
+
 export default function AddressSection({ onSelectAddress, selectedAddressId }) {
   const [addresses, setAddresses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -9,19 +23,11 @@ export default function AddressSection({ onSelectAddress, selectedAddressId }) {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
-  const [formData, setFormData] = useState({
-    label: 'Home',
-    house: '',
-    street: '',
-    locality: '',
-    city: 'Bengaluru',
-    state: 'Karnataka',
-    postalCode: '560034',
-    latitude: 12.9352,
-    longitude: 77.6245,
-    deliveryInstructions: '',
-    isDefault: false,
-  });
+  const [formData, setFormData] = useState(emptyAddress);
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   useEffect(() => {
     fetchAddresses();
@@ -44,26 +50,113 @@ export default function AddressSection({ onSelectAddress, selectedAddressId }) {
     setFormData((prev) => ({ ...prev, [e.target.name]: value }));
   };
 
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setErrorMsg('Geolocation is not supported by your browser.');
+      return;
+    }
+    setGeoLoading(true);
+    setErrorMsg(null);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          const res = await apiClient.get(`/locations/reverse-geocode?lat=${lat}&lng=${lng}`);
+          setFormData((prev) => ({
+            ...prev,
+            latitude: Number(lat.toFixed(6)),
+            longitude: Number(lng.toFixed(6)),
+            city: res.city || prev.city,
+            state: res.state || prev.state,
+            postalCode: res.postalCode || prev.postalCode,
+            locality: res.locality || prev.locality,
+            street: res.street || prev.street,
+            house: res.house || prev.house,
+          }));
+        } catch {
+          // If reverse geocoding fails, at least save coordinates
+          setFormData((prev) => ({
+            ...prev,
+            latitude: Number(pos.coords.latitude.toFixed(6)),
+            longitude: Number(pos.coords.longitude.toFixed(6)),
+          }));
+        } finally {
+          setGeoLoading(false);
+        }
+      },
+      (err) => {
+        setGeoLoading(false);
+        if (err.code === 1) {
+          setErrorMsg('Location permission denied. Please search your locality or address manually.');
+        } else {
+          setErrorMsg('Could not detect your current location. Please search manually.');
+        }
+      },
+      { timeout: 10000, enableHighAccuracy: true }
+    );
+  };
+
+  const handleSearch = async (query) => {
+    setSearchQuery(query);
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    setSearchLoading(true);
+    try {
+      const res = await apiClient.get(`/locations/search?q=${encodeURIComponent(query.trim())}`);
+      setSearchResults(res || []);
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleSelectSearchResult = (res) => {
+    setFormData((prev) => ({
+      ...prev,
+      latitude: res.lat != null ? Number(Number(res.lat).toFixed(6)) : prev.latitude,
+      longitude: res.lng != null ? Number(Number(res.lng).toFixed(6)) : prev.longitude,
+      city: res.city || prev.city,
+      state: res.state || prev.state,
+      postalCode: res.postalCode || prev.postalCode,
+      locality: res.locality || prev.locality,
+      street: res.street || prev.street,
+      house: res.house || prev.house,
+    }));
+    setSearchQuery('');
+    setSearchResults([]);
+  };
+
   const handleCreate = async (e) => {
     e.preventDefault();
+    if (formData.latitude == null || formData.longitude == null || isNaN(formData.latitude) || isNaN(formData.longitude)) {
+      setErrorMsg('Please use GPS or Search to set delivery coordinates for this address.');
+      return;
+    }
+    if (!formData.city.trim() || !formData.state.trim() || !formData.postalCode.trim() || !formData.house.trim() || !formData.street.trim() || !formData.locality.trim()) {
+      setErrorMsg('Please fill in all required address fields.');
+      return;
+    }
     setSaving(true);
     setErrorMsg(null);
     try {
-      await apiClient.post('/users/me/addresses', formData);
-      setShowForm(false);
-      setFormData({
-        label: 'Home',
-        house: '',
-        street: '',
-        locality: '',
-        city: 'Bengaluru',
-        state: 'Karnataka',
-        postalCode: '560034',
-        latitude: 12.9352,
-        longitude: 77.6245,
-        deliveryInstructions: '',
-        isDefault: false,
+      await apiClient.post('/users/me/addresses', {
+        ...formData,
+        house: formData.house.trim(),
+        street: formData.street.trim(),
+        locality: formData.locality.trim(),
+        city: formData.city.trim(),
+        state: formData.state.trim(),
+        postalCode: formData.postalCode.trim(),
+        deliveryInstructions: formData.deliveryInstructions ? formData.deliveryInstructions.trim() : '',
       });
+      setShowForm(false);
+      setFormData(emptyAddress);
+      setSearchQuery('');
+      setSearchResults([]);
       fetchAddresses();
     } catch (err) {
       setErrorMsg(err.message || 'Failed to save address.');
@@ -102,7 +195,11 @@ export default function AddressSection({ onSelectAddress, selectedAddressId }) {
           <button
             type="button"
             className="btn btn-outline-dark btn-sm rounded-pill px-3"
-            onClick={() => setShowForm(true)}
+            onClick={() => {
+              setFormData(emptyAddress);
+              setErrorMsg(null);
+              setShowForm(true);
+            }}
           >
             <i className="bi bi-plus me-1" />
             Add New Address
@@ -120,6 +217,64 @@ export default function AddressSection({ onSelectAddress, selectedAddressId }) {
       {showForm && (
         <form onSubmit={handleCreate} className="border rounded p-3 mb-4 bg-light">
           <h6 className="fw-bold small text-dark mb-3">Add New Delivery Address</h6>
+
+          {/* Location Detection / Autocomplete */}
+          <div className="mb-3">
+            <div className="d-flex gap-2 mb-2">
+              <LoadingButton
+                type="button"
+                loading={geoLoading}
+                className="btn-outline-primary btn-sm flex-grow-1 d-flex align-items-center justify-content-center gap-1"
+                onClick={handleUseCurrentLocation}
+              >
+                <i className="bi bi-crosshair" />
+                <span>Use My Current GPS Location</span>
+              </LoadingButton>
+            </div>
+            <div className="input-group input-group-sm">
+              <span className="input-group-text bg-white">
+                <i className="bi bi-search text-muted" />
+              </span>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Search area, landmark or street to autofill..."
+                value={searchQuery}
+                onChange={(e) => handleSearch(e.target.value)}
+              />
+            </div>
+            {searchResults.length > 0 && (
+              <div className="list-group shadow-sm mt-1 position-relative" style={{ maxHeight: '160px', overflowY: 'auto', zIndex: 10 }}>
+                {searchResults.map((res, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className="list-group-item list-group-item-action text-start py-2 small d-flex align-items-center gap-2"
+                    onClick={() => handleSelectSearchResult(res)}
+                  >
+                    <i className="bi bi-geo-alt text-muted" />
+                    <span className="text-truncate">{res.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Coordinate Status */}
+          <div className="mb-3">
+            {formData.latitude != null && formData.longitude != null ? (
+              <span className="badge bg-success-subtle text-success border border-success small">
+                <i className="bi bi-geo-alt-fill me-1" />
+                Coordinates: {formData.latitude.toFixed(4)}, {formData.longitude.toFixed(4)}
+              </span>
+            ) : (
+              <span className="badge bg-warning-subtle text-warning-emphasis border border-warning small">
+                <i className="bi bi-exclamation-circle me-1" />
+                Coordinates not set — click GPS button or select from search
+              </span>
+            )}
+          </div>
+
           <div className="row g-2 mb-2">
             <div className="col-4">
               <label className="form-label small fw-medium text-dark">Label</label>
@@ -130,7 +285,7 @@ export default function AddressSection({ onSelectAddress, selectedAddressId }) {
               </select>
             </div>
             <div className="col-8">
-              <label className="form-label small fw-medium text-dark">House / Flat / Block</label>
+              <label className="form-label small fw-medium text-dark">House / Flat / Block *</label>
               <input
                 type="text"
                 name="house"
@@ -144,7 +299,7 @@ export default function AddressSection({ onSelectAddress, selectedAddressId }) {
           </div>
 
           <div className="mb-2">
-            <label className="form-label small fw-medium text-dark">Street / Road / Landmark</label>
+            <label className="form-label small fw-medium text-dark">Street / Road / Landmark *</label>
             <input
               type="text"
               name="street"
@@ -158,25 +313,52 @@ export default function AddressSection({ onSelectAddress, selectedAddressId }) {
 
           <div className="row g-2 mb-2">
             <div className="col-6">
-              <label className="form-label small fw-medium text-dark">Locality / Area</label>
+              <label className="form-label small fw-medium text-dark">Locality / Area *</label>
               <input
                 type="text"
                 name="locality"
                 className="form-control form-control-sm"
-                placeholder="e.g. Koramangala"
+                placeholder="e.g. Bandra West, Virar East"
                 value={formData.locality}
                 onChange={handleChange}
                 required
               />
             </div>
             <div className="col-6">
-              <label className="form-label small fw-medium text-dark">Postal Code</label>
+              <label className="form-label small fw-medium text-dark">Postal Code *</label>
               <input
                 type="text"
                 name="postalCode"
                 className="form-control form-control-sm"
-                placeholder="560034"
+                placeholder="e.g. 401305"
                 value={formData.postalCode}
+                onChange={handleChange}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="row g-2 mb-2">
+            <div className="col-6">
+              <label className="form-label small fw-medium text-dark">City *</label>
+              <input
+                type="text"
+                name="city"
+                className="form-control form-control-sm"
+                placeholder="e.g. Mumbai, Palghar"
+                value={formData.city}
+                onChange={handleChange}
+                required
+              />
+            </div>
+            <div className="col-6">
+              <label className="form-label small fw-medium text-dark">State *</label>
+              <input
+                type="text"
+                name="state"
+                className="form-control form-control-sm"
+                placeholder="e.g. Maharashtra"
+                value={formData.state}
                 onChange={handleChange}
                 required
               />

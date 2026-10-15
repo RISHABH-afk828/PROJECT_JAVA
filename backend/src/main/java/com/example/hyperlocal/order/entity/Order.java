@@ -1,5 +1,6 @@
 package com.example.hyperlocal.order.entity;
 
+import com.example.hyperlocal.payment.entity.PaymentMethod;
 import com.example.hyperlocal.payment.entity.PaymentStatus;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
@@ -58,6 +59,10 @@ public class Order {
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_status", nullable = false, length = 40)
     private PaymentStatus paymentStatus = PaymentStatus.CREATED;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_method", length = 30)
+    private PaymentMethod paymentMethod = PaymentMethod.RAZORPAY;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
@@ -232,5 +237,13 @@ public class Order {
 
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public PaymentMethod getPaymentMethod() {
+        return paymentMethod != null ? paymentMethod : PaymentMethod.RAZORPAY;
+    }
+
+    public void setPaymentMethod(PaymentMethod paymentMethod) {
+        this.paymentMethod = paymentMethod;
     }
 }
